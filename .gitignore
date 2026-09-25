@@ -22,3 +22,5 @@ web/dist/
 /jungle
 /jungle.exe
 orig/cd
+orig/iso/
+*.ISO

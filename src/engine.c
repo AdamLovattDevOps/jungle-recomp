@@ -582,6 +582,7 @@ static s16 eval(Engine *e, const u8 *code, size_t n)
             int id = (u16)S[sp - 1 - argc];
             s16 *a = &S[sp - argc];                  /* a[0] is the first argument */
             s16 v = builtin(e, id, a, argc);
+            if (e->trace && getenv("ENGINE_BTRACE")) { printf("B%02x(", id); for (int q = 0; q < argc; q++) printf(q ? ",%d" : "%d", a[q]); printf(")=%d\n", v); }
             sp -= argc;
             T = v;
             break;
@@ -1481,6 +1482,7 @@ static int exec_record(Engine *e, const u8 *b, size_t pc, size_t n, int *adv)
         Sprite *sp = sprite_find(e, as_index(V(2)));
         if (!sp) return 1;
         wrw(e, addr_of(e, W(4)), (s16)sp->x); wrw(e, addr_of(e, W(6)), (s16)sp->y);
+        if (e->trace && getenv("ENGINE_BTRACE")) printf("POS %d = %d,%d\n", sp->res, sp->x, sp->y);
         return 1;
     }
     case 55: {                                       /* sprite bounding rect into four variables, S_060 */
@@ -1489,6 +1491,7 @@ static int exec_record(Engine *e, const u8 *b, size_t pc, size_t n, int *adv)
         int l, t, rr, bb; sprite_rect(e, sp, &l, &t, &rr, &bb);
         wrw(e, addr_of(e, W(4)), (s16)l); wrw(e, addr_of(e, W(6)), (s16)t);
         wrw(e, addr_of(e, W(8)), (s16)rr); wrw(e, addr_of(e, W(10)), (s16)bb);
+        if (e->trace && getenv("ENGINE_BTRACE")) printf("RECT %d = %d,%d,%d,%d\n", sp->res, l, t, rr, bb);
         return 1;
     }
     case 45: return 1;                               /* no handler in the original: 2-byte no-op */
@@ -1772,6 +1775,36 @@ static void sprite_rect(Engine *e, Sprite *s, int *l, int *t, int *r, int *b)
     if (*l > *r) { *l = *r = s->x; *t = *b = s->y; }
 }
 
+/* JUNGS01 FUN_1000_304e on an RLE bitmap: the pixel at (lx, ly), read by walking
+ * the row's runs in the compressed data. The walk has no end-of-row test: a 0x00
+ * (end of row) reads as a run of length 0, so a point past the last encoded pixel
+ * of a row reads on into the next row's bytes rather than coming back transparent. */
+static int rle_pixel(const u8 *hdr, size_t size, int lx, int ly)
+{
+    if (size < 20 || ly < 0 || ly >= rd16(hdr + 6)) return 0;
+    const u8 *base = hdr + 20, *end = hdr + size;
+    if (base + 2 * ly + 2 > end) return 0;
+    const u8 *p = base + rd16(base + 2 * ly);
+    int cx = lx;
+    for (int guard = 0; guard < 4096; guard++) {
+        if (p >= end) return 0;
+        int al = *p++;
+        if (al <= 0x7F) {                            /* a run: count, then the value */
+            p++; cx -= al;
+            if (cx >= 0) continue;
+            p--;
+        } else {                                     /* a literal: 0xFF - b bytes, or 0xFF n */
+            int n = al ^ 0xFF;
+            if (!n) { if (p >= end) return 0; n = *p++; }
+            p += n; cx -= n;
+            if (cx >= 0) continue;
+            p += cx;
+        }
+        return p < end ? *p : 0;
+    }
+    return 0;
+}
+
 static int cel_hit(Engine *e, Sprite *s, int celno, int x, int y)
 {
     if (celno < 0 || celno >= s->ncel) return 0;
@@ -1779,10 +1812,12 @@ static int cel_hit(Engine *e, Sprite *s, int celno, int x, int y)
     if (bi < 0) return 0;
     int w, h; const u8 *px = bitmap(e, bi, &w, &h);
     if (!px) return 0;
-    if (s->flipx) { int sw = rd16(resource_bytes(&e->c, &e->c.dir[bi]) + 2); ox = -ox - 2 * ((sw - 1) / 2); }
+    const u8 *hdr = resource_bytes(&e->c, &e->c.dir[bi]);
+    if (s->flipx) { int sw = rd16(hdr + 2); ox = -ox - 2 * ((sw - 1) / 2); }
     int lx = x - (s->x + ox), ly = y - (s->y + oy);
     if (lx < 0 || ly < 0 || lx >= w || ly >= h) return 0;
     if (s->flipx) lx = w - 1 - lx;
+    if (rd16(hdr + 8) & 0x8000) return rle_pixel(hdr, e->c.dir[bi].size, lx, ly) != 0;
     return px[(size_t)ly * w + lx] != 0;
 }
 
@@ -1828,6 +1863,7 @@ static Sprite *sprite_at(Engine *e, int x, int y)
 
 void engine_mouse(Engine *e, int x, int y, int button, int down)
 {
+    if (button) e->mheld = down ? (u8)(e->mheld | (1 << button)) : (u8)(e->mheld & ~(1 << button));
     if (e->fade.dir) return;                         /* input waits out a fade */
     x -= ORG_X; y -= ORG_Y;                                     /* FUN_1008_26e2: client -> logical */
     wrw(e, 0x3C38, (s16)x); wrw(e, 0x3C3A, (s16)y);           /* globals 5005/5006 */
@@ -1992,6 +2028,23 @@ static u16 *saved_image(Engine *e, const char *name, int create)
     return e->saved[e->nsaved++].img;
 }
 
+/* Corrections to the disc's own data, applied to a container's initial globals.
+ * Each is a defect in the 1995 data, not in the engine; JUNGLE_ORIGINAL=1 keeps
+ * the disc exactly as it is. See docs/FIDELITY.md, "Table fixes". */
+static void table_fixes(Engine *e)
+{
+    if (getenv("JUNGLE_ORIGINAL")) return;
+    s16 *g = (s16 *)e->mem + (VAR_BASE >> 1);
+    if (!strcmp(e->name, "JUNGPINB.BIN") && g[2496] == 146 && g[2501] == -193) {
+        /* Pinball, the rightmost GRUB lane post: its collision segment starts at the
+         * stake's top-left corner, outside the stake's pixel mask, where the other four
+         * start inside theirs. A ball dropping onto the stake's top-right shoulder is
+         * then stopped by the mask but judged by the segment to be moving away, so it
+         * neither moves nor bounces, for good. Start the segment inside the stake. */
+        g[2496] = 154; g[2501] = -185;
+    }
+}
+
 int engine_load(Engine *e, const char *name)
 {
     char path[512], up[16]; int k;
@@ -2024,6 +2077,7 @@ int engine_load(Engine *e, const char *name)
             u16 gi = rd16(e->c.data + voff + i), gv = rd16(e->c.data + voff + i + 2);
             if (gi < IMG_WORDS) e->mem[(VAR_BASE >> 1) + gi] = gv;
         }
+        table_fixes(e);
     }
     g_nbm = e->c.ndir;
     g_bm = calloc((size_t)g_nbm, sizeof *g_bm);
@@ -2043,6 +2097,40 @@ int engine_load(Engine *e, const char *name)
     return 1;
 }
 
+/* Pinball: a ball the table's own physics can no longer move. The movement
+ * scripts stop a ball wherever a pixel mask blocks its next step and rely on the
+ * collision scripts to bounce it; where a collision line judges the ball to be
+ * moving away (a mask and its line disagreeing, or a corner between two), the
+ * ball neither moves nor bounces and stays there for good. After two seconds
+ * perfectly still, away from the plunger and with no flipper held (a cradled
+ * ball is the player's choice), send it gently upward, off the vertical to one
+ * side and then the other: a ball at rest under gravity is always held from
+ * below, so up is the way out of any wedge, and the table's gravity brings it
+ * back down clear of it. The balls: x g1900.., y g1903.., speed g1894.., heading g1897..,
+ * 1 in play g1917... JUNGLE_ORIGINAL=1 turns this off with the table fixes. */
+static void pinball_unstick(Engine *e)
+{
+    static int original = -1;
+    if (original < 0) original = getenv("JUNGLE_ORIGINAL") != NULL;
+    if (original || e->timers_paused || strcmp(e->name, "JUNGPINB.BIN")) return;
+    s16 *g = (s16 *)e->mem + (VAR_BASE >> 1);
+    int holding = e->keydown['Z'] || e->keydown[0xBF] || e->keydown[0x26] || e->mheld;
+    for (int i = 0; i < 3; i++) {
+        s16 x = g[1900 + i], y = g[1903 + i];
+        int moved = x != e->unstick[i].x || y != e->unstick[i].y;
+        if (moved) e->unstick[i].tries = 0;
+        e->unstick[i].x = x; e->unstick[i].y = y;
+        if (moved || g[1917 + i] != 1 || holding || (x > 300 && y > 100)) { e->unstick[i].since = e->now; continue; }
+        if (e->now - e->unstick[i].since < 2000) continue;
+        int k = ++e->unstick[i].tries, off = 300 + 150 * ((k - 1) / 2 % 3);   /* 30, 45, 60 degrees off vertical */
+        int up = (k & 1) ? 1800 - off : 1800 + off;  /* up and to the right, then up and to the left */
+        g[1897 + i] = (s16)up;
+        if (g[1894 + i] < 12) g[1894 + i] = 12;
+        e->unstick[i].since = e->now;
+        if (e->trace || getenv("ENGINE_UNSTICK_LOG")) fprintf(stderr, "pinball: ball %d still at %d,%d; sent off at %d\n", i, x, y, up);
+    }
+}
+
 void engine_tick(Engine *e, u32 now)
 {
     e->now = now;
@@ -2054,6 +2142,7 @@ void engine_tick(Engine *e, u32 now)
     }
     fade_update(e);
     if (e->fade.dir) return;
+    pinball_unstick(e);
     if (e->warp.pending) { e->warp.pending = 0; engine_mouse(e, e->warp.x, e->warp.y, 0, 0); }   /* the WM_MOUSEMOVE it causes */                          /* a fade holds the engine, as its loop did */
     if (e->pending[0]) {                              /* WM_USER+0xC9 -> FUN_1008_beca */
         char nm[16]; snprintf(nm, sizeof nm, "%s", e->pending);
@@ -2150,6 +2239,13 @@ void engine_char(Engine *e, int c)
         t[n - 1] = (char)c; t[n] = '_'; t[n + 1] = 0;
     } else return;
     text_render(e, e->edit.ri);
+}
+
+int engine_edit_len(Engine *e)
+{
+    if (!e->edit.on || !g_txt) return -1;
+    size_t n = strlen(g_txt[e->edit.ri].text);       /* includes the cursor */
+    return n ? (int)n - 1 : 0;
 }
 
 void engine_key(Engine *e, int vk)

@@ -28,7 +28,7 @@ APP=$OUT/Jungle.app
 rm -rf "$APP"; mkdir -p "$APP"
 xcrun --sdk $SDK clang -target $TARGET -isysroot "$SYSROOT" -O2 -Wall -Wno-unused-parameter \
   -I$SDL/include -Isrc -o "$APP/JungleGames" \
-  src/jungle.c src/engine.c src/synth.c src/hires.c src/blit.c src/gif.c src/timing.c $SDL/src/main/uikit/SDL_uikit_main.c \
+  src/jungle.c src/engine.c src/synth.c src/hires.c src/blit.c src/gif.c src/timing.c src/pad.c src/iso.c $SDL/src/main/uikit/SDL_uikit_main.c \
   "$LIB" -lm -liconv \
   -framework UIKit -framework Foundation -framework CoreGraphics -framework QuartzCore \
   -framework OpenGLES -framework Metal -framework AVFoundation -framework AudioToolbox \

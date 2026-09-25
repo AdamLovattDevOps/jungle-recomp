@@ -24,6 +24,8 @@ static void *g_web_engine;                        /* the running game (Engine *)
 #include "core.h"
 #include "engine.h"
 #include "hires.h"
+#include "pad.h"
+#include "iso.h"
 #include <sys/stat.h>
 
 /* ---- container ------------------------------------------------------- */
@@ -759,6 +761,28 @@ static int drive_mode(Engine *e, FILE *wav, u32 *wav_n)
             char *p = line + 4; if (sscanf(p, "%x%n", &id, &off) == 1) p += off;
             while (na < 8 && sscanf(p, "%d%n", &v, &off) == 1) { args[na++] = (s16)v; p += off; }
             printf("%d\n", engine_builtin(e, id, args, na));
+        } else if (!strcmp(cmd, "set")) {             /* set N V: write script global N */
+            sscanf(line, "%*s %d %d", &a, &b);
+            if (a >= 0 && a < 0x13FE) e->mem[(0x151E >> 1) + a]   /* VAR_BASE, engine.c */ = (u16)(s16)b;
+        } else if (!strcmp(cmd, "rect")) {            /* rect RES: any sprite, hidden too: x y visible hit_hidden hit_rect l t r b */
+            sscanf(line, "%*s %d", &a);
+            Sprite *sp = NULL;
+            for (int i = 0; i < ENG_MAX_SPRITES; i++) if (e->spr[i].used && e->spr[i].res == a) sp = &e->spr[i];
+            int l = 0, tp = 0, rr = 0, bb = 0;
+            if (sp) { engine_sprite_rect(e, a, &l, &tp, &rr, &bb);
+                printf("%d %d %d %d %d %d %d %d %d\n", sp->x, sp->y, sp->visible, sp->hit_hidden, sp->hit_rect, l, tp, rr, bb); }
+            else printf("none\n");
+        } else if (!strcmp(cmd, "binds")) {           /* the keys this scene listens to: vk, script bindings, game-input code */
+            for (int v = 0; v < 256; v++) {
+                int scr = !e->keys[v].off && (e->keys[v].down || e->keys[v].up || e->keys[v].shift || e->keys[v].ctrl);
+                if (scr || e->keymap[v].code)
+                    printf("%02x script=%d kbd=%d code=%02x\n", v, scr, e->keymap[v].kbd, e->keymap[v].code);
+            }
+            for (int k = 0; k < 2; k++) {
+                printf("layout %d:", k);
+                for (int j = 0; j < 6; j++) printf(" %02x=%02x", e->layout[k][j][0], e->layout[k][j][1]);
+                printf("\n");
+            }
         } else if (!strcmp(cmd, "trace")) {           /* trace 1 / trace 0: the script trace, to stdout */
             sscanf(line, "%*s %d", &a); e->trace = a;
         } else if (!strcmp(cmd, "quit")) {
@@ -796,6 +820,15 @@ static void from_canvas(SDL_Window *win, SDL_Renderer *ren, int *x, int *y)
     *x = (int)((r.x + *x * r.w / ENG_W) * ww / ow); *y = (int)((r.y + *y * r.h / ENG_H) * wh / oh);
 }
 
+static SDL_Renderer *g_pad_ren;
+static void pad_warp(void *ctx, int x, int y)   /* a pad moved the pointer: move the real one with it */
+{
+    SDL_Window *win = ctx;
+    if (!(SDL_GetWindowFlags(win) & SDL_WINDOW_INPUT_FOCUS)) return;
+    from_canvas(win, g_pad_ren, &x, &y);
+    SDL_WarpMouseInWindow(win, x, y);
+}
+
 /* The high-resolution art cache: $JUNGLE_HIRES, else hires/ beside the
  * executable, else build/hires in a checkout (tools/upscale.py writes it). */
 static int find_hires(char *out, size_t cap)
@@ -829,6 +862,11 @@ int main(int argc, char **argv)
     /* No arguments: play. The disc's JUNGLE directory is looked for where
      * each platform keeps app data (the user copies it there from their disc). */
     static char def_bin[1024]; static char *def_argv[3];
+    if (argc > 3 && strcmp(argv[1], "--extract-iso") == 0) {   /* --extract-iso IMAGE DEST: the disc's JUNGLE directory */
+        int n = iso_extract_dir(argv[2], "JUNGLE", argv[3]);
+        if (n > 0) printf("%d files from %s -> %s\n", n, argv[2], argv[3]);
+        return n > 0 ? 0 : 1;
+    }
     if (argc < 2) {
 #if defined(__vita__)
         snprintf(def_bin, sizeof def_bin, "ux0:data/jungle/JUNGLE.BIN");
@@ -1420,7 +1458,7 @@ int main(int argc, char **argv)
         e->trace = getenv("ENGINE_TRACE") != NULL;
         SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
         if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0) { fprintf(stderr, "SDL: %s\n", SDL_GetError()); return 1; }
-        for (int j = 0; j < SDL_NumJoysticks(); j++) if (SDL_IsGameController(j)) SDL_GameControllerOpen(j);
+        pad_init();
         SDL_AudioSpec want; SDL_memset(&want, 0, sizeof want);
         want.freq = 22050; want.format = AUDIO_S16LSB; want.channels = 1; want.samples = 512;   /* 23 ms */
         const char *mute = getenv("JUNGLE_MUTE");
@@ -1458,27 +1496,8 @@ int main(int argc, char **argv)
             SDL_Event ev;
             while (SDL_PollEvent(&ev)) {
                 if (ev.type == SDL_QUIT) running = 0;
-                else if (ev.type == SDL_CONTROLLERDEVICEADDED) SDL_GameControllerOpen(ev.cdevice.which);
-                else if (ev.type == SDL_CONTROLLERBUTTONDOWN || ev.type == SDL_CONTROLLERBUTTONUP) {
-                    /* Pads map onto the keys the games already use: arrows, X and Z
-                     * for Hippo Hop and Burper, Z and / for Pinball's flippers. */
-                    int vk = 0;
-                    switch (ev.cbutton.button) {
-                    case SDL_CONTROLLER_BUTTON_DPAD_UP: vk = 0x26; break;
-                    case SDL_CONTROLLER_BUTTON_DPAD_DOWN: vk = 0x28; break;
-                    case SDL_CONTROLLER_BUTTON_DPAD_LEFT: vk = 0x25; break;
-                    case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: vk = 0x27; break;
-                    case SDL_CONTROLLER_BUTTON_A: vk = 'X'; break;
-                    case SDL_CONTROLLER_BUTTON_B: vk = 'Z'; break;
-                    case SDL_CONTROLLER_BUTTON_X: vk = 0x20; break;
-                    case SDL_CONTROLLER_BUTTON_Y: case SDL_CONTROLLER_BUTTON_START: vk = 0x0D; break;
-                    case SDL_CONTROLLER_BUTTON_BACK: vk = 0x1B; break;
-                    case SDL_CONTROLLER_BUTTON_LEFTSHOULDER: vk = 'Z'; break;
-                    case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: vk = 0xBF; break;
-                    }
-                    if (vk) { if (ev.type == SDL_CONTROLLERBUTTONDOWN) engine_key(e, vk); else engine_keystate(e, vk, 0); }
-                }
-                else if (ev.type == SDL_MOUSEMOTION) { int mx = ev.motion.x, my = ev.motion.y; to_canvas(win, ren, &mx, &my); engine_mouse(e, mx, my, 0, 0); }
+                else if (ev.type == SDL_CONTROLLERDEVICEADDED || ev.type == SDL_CONTROLLERDEVICEREMOVED) pad_event(&ev);
+                else if (ev.type == SDL_MOUSEMOTION) { int mx = ev.motion.x, my = ev.motion.y; to_canvas(win, ren, &mx, &my); engine_mouse(e, mx, my, 0, 0); pad_pointer(mx, my); }
                 else if (ev.type == SDL_MOUSEBUTTONDOWN || ev.type == SDL_MOUSEBUTTONUP) {
                     int b = ev.button.button == SDL_BUTTON_RIGHT ? 2 : 1;
                     int mx = ev.button.x, my = ev.button.y; to_canvas(win, ren, &mx, &my);
@@ -1497,6 +1516,12 @@ int main(int argc, char **argv)
                     else if (k == SDLK_KP_PLUS) vk = 0x6B; else if (k == SDLK_KP_MINUS) vk = 0x6D;
                     else if (k == SDLK_KP_MULTIPLY) vk = 0x6A;
                     else if (k == SDLK_SLASH) vk = 0xBF;
+                    /* the OEM keys: Bug Drop's player one rotates with , and . (< and >) */
+                    else if (k == SDLK_COMMA) vk = 0xBC; else if (k == SDLK_PERIOD) vk = 0xBE;
+                    else if (k == SDLK_SEMICOLON) vk = 0xBA; else if (k == SDLK_QUOTE) vk = 0xDE;
+                    else if (k == SDLK_MINUS) vk = 0xBD; else if (k == SDLK_EQUALS) vk = 0xBB;
+                    else if (k == SDLK_LEFTBRACKET) vk = 0xDB; else if (k == SDLK_RIGHTBRACKET) vk = 0xDD;
+                    else if (k == SDLK_BACKSLASH) vk = 0xDC;
                     else if (k == SDLK_LCTRL || k == SDLK_RCTRL) vk = 0x11;
                     else if (k == SDLK_LSHIFT || k == SDLK_RSHIFT) vk = 0x10;
                     else if (k >= SDLK_F1 && k <= SDLK_F12) vk = 0x70 + (k - SDLK_F1);
@@ -1518,6 +1543,13 @@ int main(int argc, char **argv)
                 } else if (ev.type == SDL_TEXTINPUT) {  /* typed characters: high-score names */
                     for (const char *c = ev.text.text; *c; c++) if ((unsigned char)*c < 0x80) engine_char(e, *c);
                 }
+            }
+            {   /* controllers: the keys and mouse they hold, for the scene on screen */
+                static u32 last_pad; u32 now = SDL_GetTicks();
+                PadHost ph = { pad_warp, win };
+                g_pad_ren = ren;
+                pad_update(e, last_pad ? now - last_pad : 0, &ph);
+                last_pad = now;
             }
             engine_tick(e, SDL_GetTicks() - t0);
             if (e->warp.host) {                      /* op 73: put the real pointer where the game moved it */

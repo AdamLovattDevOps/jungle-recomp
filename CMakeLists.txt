@@ -11,7 +11,7 @@ set(CMAKE_C_STANDARD 99)
 find_package(SDL2 REQUIRED)
 
 add_executable(jungle
-    src/jungle.c src/engine.c src/synth.c src/hires.c src/blit.c src/gif.c src/timing.c)
+    src/jungle.c src/engine.c src/synth.c src/hires.c src/blit.c src/gif.c src/timing.c src/pad.c src/iso.c)
 target_include_directories(jungle PRIVATE src)
 if(TARGET SDL2::SDL2main)
     target_link_libraries(jungle PRIVATE SDL2::SDL2main)

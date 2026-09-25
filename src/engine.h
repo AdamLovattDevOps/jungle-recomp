@@ -92,6 +92,8 @@ typedef struct {
     u32         now;
     int         trace;
     unsigned    unimpl_rec[256], unimpl_builtin[256];
+    u8          mheld;               /* mouse buttons held, bit 1 left, bit 2 right */
+    struct { s16 x, y; u32 since; int tries; } unstick[3];   /* pinball_unstick, per ball */
 } Engine;
 
 /* The frame as a list of draws, in painting order, for hosts that draw with the
@@ -111,6 +113,7 @@ void engine_tick(Engine *e, u32 now_ms);
 void engine_key(Engine *e, int vk);                 /* key pressed: runs bindings */
 void engine_keystate(Engine *e, int vk, int down);  /* held state for GetKeyState */
 void engine_char(Engine *e, int c);
+int  engine_edit_len(Engine *e);                    /* characters in the text field being typed into, -1 none */
 s16  engine_builtin(Engine *e, int id, s16 *a, int argc);  /* call a script builtin, for tests */
 int  engine_sprite_rect(Engine *e, int res, int *l, int *t, int *r, int *b);   /* canvas pixels; 0 if absent */                  /* a typed character (WM_CHAR): text entry */
 void engine_mouse(Engine *e, int x, int y, int button, int down);  /* button 0 = move */

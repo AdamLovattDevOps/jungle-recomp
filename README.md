@@ -54,12 +54,32 @@ mkdir -p orig/cd && cp -R /Volumes/*/JUNGLE orig/cd/
 |---|---|---|
 | macOS | `brew install sdl2 && make && ./jungle` | finds `orig/cd/JUNGLE`, or `JUNGLE/` beside the binary |
 | Linux | `apt install libsdl2-dev && make && ./jungle` | or CMake |
+| Linux AppImage | `make appimage` (podman or docker) | one file; finds or fetches the disc, see below |
 | Windows | `make windows` (MinGW-w64 cross build) | copy `JUNGLE/` next to `jungle.exe` |
 | iPad / iPhone | `tools/build_ipa.sh <team id>` | a signed `.ipa` for sideloading; see below |
 | Web | `web/build.sh` (Emscripten) | see below |
 | PS Vita | `cmake -DVITA=ON ...` (VitaSDK) | `jungle.vpk`; data in `ux0:data/jungle/` |
 
 Full details for each platform are in [docs/PLATFORMS.md](docs/PLATFORMS.md).
+
+### Linux AppImage
+
+`make appimage` (or `tools/appimage/build.sh`) builds `build/appimage/Jungle_Games-x86_64.AppImage`
+inside a container (`tools/appimage/Containerfile`: Ubuntu 22.04, SDL2 built with every video and
+audio backend loaded at run time), so the file carries only the engine and libSDL2 and runs on
+any x86-64 distribution with glibc 2.34 or later. It holds no game data. On first run it looks
+for the disc and unpacks its `JUNGLE` directory into `~/.local/share/jungle-games`:
+
+1. a path on the command line, `$JUNGLE_DATA` (a `JUNGLE` directory) or `$JUNGLE_ISO` (an image);
+2. a `JUNGLE` directory beside the AppImage;
+3. a disc image (`JUNGLE*.ISO`, `*TIMON*.ISO`) beside it, in `~/Downloads`, `~/Games`, on mounted
+   drives and network shares (`/mnt/*/isos`, `/mnt/*`, `/run/media/*/*`), or in the directories
+   listed in `~/.config/jungle-games/search`;
+4. otherwise, if you agree, the image from archive.org, checked against its sha256.
+
+The engine unpacks ISO 9660 itself (`jungle --extract-iso IMAGE DEST`), so nothing else is
+needed. For a handheld, add the AppImage to Steam as a non-Steam game; Steam Input's pad is
+picked up like any other.
 
 ### iPad and iPhone
 
@@ -94,7 +114,8 @@ If you host a copy that includes game data, gate it (the page supports a server-
 
 Each game lists its keys on its rules panel. For example, Hippo Hop uses the arrows plus X and Z,
 and Pinball uses Z and / for the flippers, the up arrow for both, Enter to launch and Space to shake.
-Controllers map the d-pad to the arrows, A/B to X/Z and the shoulders to the flippers.
+Controllers work in every game, including two-player Bug Drop on one pad split Joy-Con style;
+the mapping is in [docs/CONTROLLERS.md](docs/CONTROLLERS.md).
 
 ## Testing
 

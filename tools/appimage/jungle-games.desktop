@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Timon & Pumbaa's Jungle Games
+Comment=7th Level's 1995 engine, reimplemented; plays your own disc
+Exec=jungle
+Icon=jungle-games
+Categories=Game;ArcadeGame;
+Terminal=false

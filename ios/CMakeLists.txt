@@ -13,7 +13,7 @@ set_source_files_properties(${DISC_FILES} PROPERTIES MACOSX_PACKAGE_LOCATION JUN
 
 add_executable(JungleGames MACOSX_BUNDLE
   ${ROOT}/src/jungle.c ${ROOT}/src/engine.c ${ROOT}/src/synth.c ${ROOT}/src/hires.c
-  ${ROOT}/src/blit.c ${ROOT}/src/gif.c ${ROOT}/src/timing.c ${SDL}/src/main/uikit/SDL_uikit_main.c
+  ${ROOT}/src/blit.c ${ROOT}/src/gif.c ${ROOT}/src/timing.c ${ROOT}/src/pad.c ${ROOT}/src/iso.c ${SDL}/src/main/uikit/SDL_uikit_main.c
   ${DISC_FILES} ${CMAKE_CURRENT_SOURCE_DIR}/LaunchScreen.storyboard)
 target_include_directories(JungleGames PRIVATE ${ROOT}/src ${SDL}/include)
 target_compile_options(JungleGames PRIVATE -O2 -Wno-unused-parameter)

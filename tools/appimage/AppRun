@@ -1,0 +1,122 @@
+#!/bin/sh
+# Timon & Pumbaa's Jungle Games, as an AppImage: find the disc, then play it.
+#
+# The game's files come from, in order:
+#   1. a path given on the command line: a JUNGLE directory or a disc image
+#   2. $JUNGLE_DATA (a JUNGLE directory) or $JUNGLE_ISO (a disc image)
+#   3. a JUNGLE directory beside the AppImage, or the one unpacked on a previous run
+#      (~/.local/share/jungle-games/JUNGLE)
+#   4. a disc image (JUNGLE*.ISO, *TIMON*.ISO) beside the AppImage, in ~/Downloads, ~/Games,
+#      on mounted drives and network shares (/mnt/*/isos, /mnt/*, /run/media/*/*), or in any
+#      directory listed one per line in ~/.config/jungle-games/search
+#   5. archive.org, with your say-so: the same image, checked against its sha256
+# JUNGLE_SEARCH=0 skips step 4 (and 3's unpacked copy), going straight to archive.org.
+# An image is unpacked once; after that the game starts straight away.
+
+HERE="$(dirname "$(readlink -f "$0")")"
+BIN="$HERE/usr/bin/jungle"
+SUMS="$HERE/usr/share/jungle-games/CHECKSUMS.sha256"
+STORE="${XDG_DATA_HOME:-$HOME/.local/share}/jungle-games"
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/jungle-games"
+BESIDE="$(dirname "${APPIMAGE:-$HERE}")"
+IA_ITEM="https://archive.org/details/timon-and-pumbaas-jungle-games-big-box"
+IA_URL="https://archive.org/download/timon-and-pumbaas-jungle-games-big-box/JUNGLE_ADVENTURE.ISO"
+IA_SHA256="aba342ad16a39fa641e6312acb300f20440823bda8f851b10a61762591a0bfd8"
+TITLE="Timon & Pumbaa's Jungle Games"
+
+say() { echo "jungle: $*" >&2; }
+gui() { [ -n "$DISPLAY$WAYLAND_DISPLAY" ] && { command -v zenity >/dev/null || command -v kdialog >/dev/null; }; }
+fail() {
+    say "$*"
+    if gui; then
+        if command -v zenity >/dev/null; then zenity --error --title="$TITLE" --text="$*" 2>/dev/null
+        else kdialog --title "$TITLE" --error "$*" 2>/dev/null; fi
+    fi
+    exit 1
+}
+ask() {   # yes when there is nobody to ask: a terminal run was asked for by running it
+    gui || return 0
+    if command -v zenity >/dev/null; then zenity --question --title="$TITLE" --width=420 --text="$1" 2>/dev/null
+    else kdialog --title "$TITLE" --yesno "$1" 2>/dev/null; fi
+}
+
+has_data() { [ -n "$1" ] && [ -f "$1/JUNGLE.BIN" ] && [ -f "$1/JUNGA01.DLL" ] && [ -f "$1/JUNGU01.DLL" ]; }
+play() { exec "$BIN" "$1/JUNGLE.BIN" --game; }
+
+# Unpack an image's JUNGLE directory into the store, check it, and play.
+unpack() {
+    say "unpacking $1"
+    mkdir -p "$STORE" || fail "cannot create $STORE"
+    rm -rf "$STORE/JUNGLE.part"
+    "$BIN" --extract-iso "$1" "$STORE/JUNGLE.part" >&2 || return 1
+    has_data "$STORE/JUNGLE.part" || { rm -rf "$STORE/JUNGLE.part"; return 1; }
+    if command -v sha256sum >/dev/null && [ -f "$SUMS" ]; then
+        if (cd "$STORE/JUNGLE.part" && grep '/JUNGLE/' "$SUMS" | sed 's#\./JUNGLE/##' | sha256sum -c --quiet >/dev/null 2>&1)
+        then say "every file matches the reference disc"
+        else say "warning: this disc differs from the one the engine was built against; trying it anyway"; fi
+    fi
+    rm -rf "$STORE/JUNGLE" && mv "$STORE/JUNGLE.part" "$STORE/JUNGLE" || fail "cannot write $STORE/JUNGLE"
+    printf '%s\n' "$1" > "$STORE/source.txt"
+    play "$STORE/JUNGLE"
+}
+
+find_images() {
+    { [ -f "$CONF/search" ] && cat "$CONF/search"
+      printf '%s\n' "$BESIDE" "$STORE" "$HOME/Downloads" "$HOME/Games" "$HOME"
+      for d in /mnt/*/isos /mnt/*/ISOs /mnt/* /run/media/*/* /media/*/*; do printf '%s\n' "$d"; done
+    } | while IFS= read -r d; do
+        [ -d "$d" ] || continue
+        find "$d" -maxdepth 2 -type f \( -iname 'jungle*.iso' -o -iname '*timon*.iso' -o -iname '*pumbaa*.iso' \) 2>/dev/null
+    done
+}
+
+download() {
+    command -v curl >/dev/null || command -v wget >/dev/null || fail "No disc found, and neither curl nor wget is installed to fetch one."
+    ask "No copy of the Jungle Games disc was found on this computer.
+
+Download the disc image (63 MB) from archive.org?
+$IA_ITEM
+
+Please own the game." || fail "No disc: put JUNGLE_ADVENTURE.ISO (or the disc's JUNGLE folder) beside the AppImage, or pass its path."
+    mkdir -p "$STORE" || fail "cannot create $STORE"
+    part="$STORE/JUNGLE_ADVENTURE.ISO.part"
+    say "downloading $IA_URL"
+    if command -v curl >/dev/null; then fetch="curl -fL --retry 3 -o"; else fetch="wget -O"; fi
+    if gui && command -v zenity >/dev/null; then
+        ( $fetch "$part" "$IA_URL"; echo $? > "$part.rc" ) 2>&1 | zenity --progress --pulsate --auto-close --no-cancel \
+            --title="$TITLE" --text="Downloading the disc image from archive.org..." 2>/dev/null
+        [ "$(cat "$part.rc" 2>/dev/null)" = 0 ]; ok=$?; rm -f "$part.rc"
+    else
+        $fetch "$part" "$IA_URL"; ok=$?
+    fi
+    [ $ok = 0 ] || { rm -f "$part"; fail "The download from archive.org failed."; }
+    if command -v sha256sum >/dev/null; then
+        got="$(sha256sum "$part" | cut -d' ' -f1)"
+        [ "$got" = "$IA_SHA256" ] || { rm -f "$part"; fail "The downloaded image is not the expected one (sha256 $got)."; }
+    fi
+    mv "$part" "$STORE/JUNGLE_ADVENTURE.ISO"
+    unpack "$STORE/JUNGLE_ADVENTURE.ISO" || fail "Could not unpack the downloaded image."
+}
+
+# 1, 2: asked for by name
+for arg in "$1" "$JUNGLE_DATA" "$JUNGLE_ISO"; do
+    [ -n "$arg" ] || continue
+    if [ -d "$arg" ]; then has_data "$arg" && play "$arg"; has_data "$arg/JUNGLE" && play "$arg/JUNGLE"
+    elif [ -f "$arg" ]; then unpack "$arg"; fi
+    fail "$arg holds no Jungle Games data (JUNGLE.BIN, JUNGA01.DLL, JUNGU01.DLL)."
+done
+if [ "${JUNGLE_SEARCH:-1}" != 0 ]; then
+    # 3: already unpacked
+    has_data "$BESIDE/JUNGLE" && play "$BESIDE/JUNGLE"
+    has_data "$STORE/JUNGLE" && play "$STORE/JUNGLE"
+    # 4: an image somewhere
+    IFS='
+'
+    for img in $(find_images | awk '!seen[$0]++'); do
+        unpack "$img" && exit 0
+        say "not the Jungle Games disc: $img"
+    done
+    unset IFS
+fi
+# 5: archive.org
+download

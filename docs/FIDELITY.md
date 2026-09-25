@@ -120,3 +120,41 @@ art judgement and should be opt-in.
 - Do not replay missed ticks.
 - Do not smooth or interpolate animation the engine steps discretely.
 - Keep every change behind a flag so original behaviour stays reachable for parity testing.
+
+## Table fixes (deliberate deviations)
+
+Everywhere else the port follows the original instruction for instruction. Pinball is the one
+place it knowingly plays differently, because the original physics can hold a ball still for good.
+`JUNGLE_ORIGINAL=1` turns both changes off.
+
+**How a ball gets stuck.** Each tick the movement script (721) aims the ball one step along its
+heading and a mask script (1691 at the top of the table, 1692 at the bottom) halves the step back
+until the point is off the table's pixel masks. It never deflects. Bouncing is left to the
+collision scripts, which model posts and guides as line segments and bounce only a ball moving
+*into* a line. Where a mask and its line disagree, the mask stops the ball while the line says it
+is moving away. The ball then gets no move and no bounce, gravity keeps adding speed that goes
+nowhere, and it stays put until the table is shaken.
+
+Every routine on that path was checked against the original machine code: the expression VM
+(all operators, truncating division), the trig tables and helpers, `GETANGLE` and its degrees
+constant, `COLLIDE`, ray-to-box (op 50), the long-arithmetic builtins, sprite placement
+(JUNGS01 `FUN_1000_0b30`) and the point-on-sprite test (JUNGS01 ordinal 81 and its pixel reader
+`FUN_1000_304e`). All of them match.
+
+1. **The rightmost GRUB lane post** (`table_fixes`). Its segment's top end (globals 2496 and 2501)
+   is the stake's top-left corner, (146, −193). That is outside the stake's mask, while the other
+   four posts' segments start inside theirs. A ball dropping onto the stake's top-right shoulder
+   rests at (159, −191), inside the top-cap test (`y <= top + 2`) by one pixel, and is judged to be
+   moving away from the cap. With the ball bot, that happened in about a fifth of games, after an
+   ordinary 1–2.5 s launch. Moving the top end to (154, −185), inside the stake like the others,
+   removes it (0 in 72 games).
+2. **Any other wedge** (`pinball_unstick`). A ball in play that stays perfectly still for 2 s, not
+   in the plunger lane and with no flipper held (cradling stays possible), is sent gently upward,
+   30–60° off vertical, alternating sides. A ball at rest under gravity is always held from below,
+   so up is the way out, and the table's own gravity brings it back down. In testing this fired
+   about once in six games, always in the right inlane corner above the flipper pivot, and freed
+   the ball within two pushes.
+
+The point-on-sprite test also reads RLE bitmaps the way `FUN_1000_304e` does. It walks the
+compressed row with no end-of-row check, so a point past a row's last encoded pixel reads on into
+the next row's bytes rather than returning transparent.

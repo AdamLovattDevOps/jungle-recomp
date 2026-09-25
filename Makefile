@@ -10,12 +10,12 @@ BIN     := jungle
 SRC     := src/jungle.c
 DISC    := orig/cd/JUNGLE
 
-.PHONY: all clean verify check test windows e2e hires
+.PHONY: all clean verify check test windows e2e hires pad_test appimage
 
 all: $(BIN)
 
-$(BIN): $(SRC) src/engine.c src/engine.h src/synth.c src/synth.h src/hires.c src/hires.h src/core.h src/third_party/stb_truetype.h src/blit.c src/gif.c src/timing.c
-	$(CC) $(CFLAGS) $(SDL) -o $@ $(SRC) src/engine.c src/synth.c src/hires.c src/blit.c src/gif.c src/timing.c $(LIBS)
+$(BIN): $(SRC) src/engine.c src/engine.h src/synth.c src/synth.h src/hires.c src/hires.h src/core.h src/third_party/stb_truetype.h src/blit.c src/gif.c src/timing.c src/pad.c src/iso.c src/pad.h
+	$(CC) $(CFLAGS) $(SDL) -o $@ $(SRC) src/engine.c src/synth.c src/hires.c src/blit.c src/gif.c src/timing.c src/pad.c src/iso.c $(LIBS)
 
 # Decode every bitmap in every container, headless.
 verify: $(BIN)
@@ -30,6 +30,11 @@ test:
 	@$(CC) $(CFLAGS) -o build/blit_test tests/blit_test.c src/blit.c && ./build/blit_test
 	@$(CC) $(CFLAGS) -o build/timing_test tests/timing_test.c src/timing.c && ./build/timing_test
 
+# Controller mapping, against an SDL virtual pad. No disc or hardware required.
+pad_test:
+	@mkdir -p build
+	@$(CC) $(CFLAGS) $(SDL) -o build/pad_test tests/pad_test.c src/pad.c $(LIBS) && SDL_VIDEODRIVER=dummy ./build/pad_test
+
 # End-to-end: the game played headless with scripted input (needs the disc data).
 e2e: $(BIN)
 	@python3 tests/e2e.py $(DISC)
@@ -39,12 +44,16 @@ e2e: $(BIN)
 hires: $(BIN)
 	@python3 tools/upscale.py --disc $(DISC)
 
+# Linux AppImage, built in a container (podman or docker). See tools/appimage/.
+appimage:
+	@tools/appimage/build.sh
+
 # Windows cross-build with MinGW-w64; SDL2's MinGW dev package unpacked in build/deps.
 WIN_SDL ?= build/deps/SDL2-2.30.9/x86_64-w64-mingw32
 windows:
 	@mkdir -p build/win64
 	x86_64-w64-mingw32-gcc -O2 -Wall -Wno-unused-parameter -I$(WIN_SDL)/include/SDL2 -Dmain=SDL_main \
-	  -o build/win64/jungle.exe src/jungle.c src/engine.c src/synth.c src/hires.c src/blit.c src/gif.c src/timing.c \
+	  -o build/win64/jungle.exe src/jungle.c src/engine.c src/synth.c src/hires.c src/blit.c src/gif.c src/timing.c src/pad.c src/iso.c \
 	  -L$(WIN_SDL)/lib -lmingw32 -lSDL2main -lSDL2 -lm -mwindows
 	cp $(WIN_SDL)/bin/SDL2.dll build/win64/
 

@@ -87,15 +87,15 @@ app runs full screen in landscape. Touches arrive as mouse events.
 
 ## Controllers
 
-Any SDL game controller works on every platform, with the same mapping as the Vita buttons
-above (A/B are X/Z; the shoulders are Z and `/`).
+Any SDL game controller works on every platform; the mapping per game is in
+[CONTROLLERS.md](CONTROLLERS.md).
 
 ## What has been tested
 
 | Platform | State |
 |---|---|
 | macOS (arm64) | built and played; the engine harness checks every game headless |
-| Linux | same code and CMake path as macOS; not yet built on Linux |
+| Linux | built and played on Bazzite (Legion Go 2) as the AppImage, launched from Steam |
 | Windows | `jungle.exe` cross-compiles cleanly; not yet run |
 | PS Vita | `jungle.vpk` builds with VitaSDK 2026.08; not yet run on hardware or in Vita3K |
 | High-resolution art | macOS: every scene exported and upscaled; the renderer matches the classic frame exactly without the cache (`make e2e`) |

@@ -1,0 +1,42 @@
+# Build image for the Linux AppImage (podman or docker).
+#
+#   tools/appimage/build.sh          # builds this image, then build/jungle-x86_64.AppImage
+#
+# Ubuntu 22.04 keeps the glibc floor at 2.35 (SteamOS, Bazzite, Fedora, Ubuntu 22.04+).
+# SDL2 is built from source with every video/audio backend loaded at run time, so the
+# AppImage carries libSDL2 alone and uses whatever X11/Wayland/PipeWire/Pulse the host has.
+FROM docker.io/library/ubuntu:22.04
+
+ARG SDL_VERSION=2.30.9
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential cmake ninja-build pkg-config curl ca-certificates file python3 python3-pil \
+        libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxinerama-dev \
+        libxss-dev libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev \
+        libegl-dev libgl-dev libgles-dev libdrm-dev libgbm-dev \
+        libpulse-dev libasound2-dev libpipewire-0.3-dev libudev-dev libdbus-1-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL https://github.com/libsdl-org/SDL/releases/download/release-${SDL_VERSION}/SDL2-${SDL_VERSION}.tar.gz \
+        | tar -xz -C /tmp \
+    && cmake -S /tmp/SDL2-${SDL_VERSION} -B /tmp/sdl-build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/sdl2 \
+        -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TEST=OFF \
+        -DSDL_X11_SHARED=ON -DSDL_WAYLAND_SHARED=ON -DSDL_WAYLAND_LIBDECOR_SHARED=ON \
+        -DSDL_PULSEAUDIO_SHARED=ON -DSDL_PIPEWIRE_SHARED=ON -DSDL_ALSA_SHARED=ON \
+        -DSDL_KMSDRM_SHARED=ON \
+    && cmake --build /tmp/sdl-build && cmake --install /tmp/sdl-build \
+    && rm -rf /tmp/SDL2-${SDL_VERSION} /tmp/sdl-build
+
+# appimagetool, unpacked so it runs without FUSE inside the container, and the type-2
+# runtime it embeds (passed explicitly so packing never reaches the network).
+RUN curl -fsSL -o /tmp/appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage \
+    && chmod +x /tmp/appimagetool && cd /opt && /tmp/appimagetool --appimage-extract >/dev/null \
+    && mv /opt/squashfs-root /opt/appimagetool && rm /tmp/appimagetool \
+    && curl -fsSL -o /opt/runtime-x86_64 https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64
+
+ENV PATH=/opt/sdl2/bin:/opt/appimagetool/usr/bin:$PATH \
+    PKG_CONFIG_PATH=/opt/sdl2/lib/pkgconfig \
+    LD_LIBRARY_PATH=/opt/sdl2/lib
+WORKDIR /src
