@@ -759,6 +759,16 @@ static int drive_mode(Engine *e, FILE *wav, u32 *wav_n)
             char *p = line + 4; if (sscanf(p, "%x%n", &id, &off) == 1) p += off;
             while (na < 8 && sscanf(p, "%d%n", &v, &off) == 1) { args[na++] = (s16)v; p += off; }
             printf("%d\n", engine_builtin(e, id, args, na));
+        } else if (!strcmp(cmd, "state")) {           /* what drives the scene right now */
+            int ns = 0, nv = 0, nr = 0, nk = 0;
+            for (int i = 0; i < ENG_MAX_SPRITES; i++) if (e->spr[i].used) { ns++; nv += e->spr[i].visible; nr += e->spr[i].running; }
+            for (int v = 0; v < 256; v++) if (e->keys[v].down || e->keys[v].up || e->keys[v].shift || e->keys[v].ctrl) nk++;
+            printf("scene %s sprites %d visible %d running %d timers %d keys %d hotspots %d regions %d collisions %d queue %d music %d voices",
+                   e->name, ns, nv, nr, e->ntm, nk, e->nhot, e->nreg, e->ncol, e->nq, e->mus.on);
+            int nvo = 0; for (int k = 0; k < 16; k++) nvo += e->voice[k].pcm != NULL; printf(" %d\n", nvo);
+            for (int i = 0; i < e->ntm; i++) printf("timer %u every %u repeat %d\n", e->tm[i].id, e->tm[i].every, e->tm[i].repeat);
+            for (int v = 0; v < 256; v++) if (e->keys[v].down || e->keys[v].up) printf("key 0x%02x%s%s\n", v, e->keys[v].down ? " down" : "", e->keys[v].up ? " up" : "");
+            for (int i = 0; i < 4; i++) if (e->player[i].script) printf("player %d input-script\n", i);
         } else if (!strcmp(cmd, "trace")) {           /* trace 1 / trace 0: the script trace, to stdout */
             sscanf(line, "%*s %d", &a); e->trace = a;
         } else if (!strcmp(cmd, "quit")) {
