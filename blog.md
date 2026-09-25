@@ -31,6 +31,28 @@ and, as far as I could find, no prior documentation of the file formats.
   and it worked through it round by round, writing up each round in a findings log. It committed
   as it went: 153 commits, and a 3,000-line log that includes every wrong turn.
 
+## Before and after, in pictures
+
+This is the whole stack as it shipped in 1995: a C code base compiled with Visual C++ 1.0 into
+five 16-bit binaries, running on Windows 3.1 on a 486. The important layer is the third one. The
+executable is a general-purpose player, and the game itself is data.
+
+![The 1995 stack, from the source code down to the hardware](docs/diagrams/before-1995.png)
+
+And this is how it was taken apart and rebuilt: from the disc image, through decompilation and
+format decoding, into a new C engine. From there it goes through automated verification and a
+single SDL2 host layer out to six platforms, ending at a sideloaded app on the iPad.
+
+![From the assembly to the iPad](docs/diagrams/after-pipeline.png)
+
+Every mini-game is one container run by the same engine: timers, collision pairs and input all feed
+the script VM, which drives sprites, sound and the common screens.
+
+![How each mini-game sits on the engine](docs/diagrams/engine-games.png)
+
+Each technique on the way, and what it gained, is listed in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), along with a breakdown of each game.
+
 ## Day one: the data, cracked in an afternoon
 
 The game ships as a small Windows executable, four DLLs and thirteen `.BIN` containers. The

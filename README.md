@@ -115,7 +115,9 @@ reads sprites and script variables (`tests/drive.py`).
 The engine was reverse engineered from the five original NE binaries (`JUNGLE.EXE`, `JUNGR01`,
 `JUNGS01`, `JUNGA01` and `JUNGU01.DLL`, about 158 KB of code) with Ghidra, a set of purpose-built
 Python tools, and a lot of reading of 16-bit x86. The investigation log, including every wrong turn,
-is [docs/FINDINGS.md](docs/FINDINGS.md). The data formats are in [docs/FORMAT.md](docs/FORMAT.md).
+is [docs/FINDINGS.md](docs/FINDINGS.md). [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has diagrams of
+the original 1995 stack, the pipeline from the assembly to the iPad, and how each mini-game is built
+on the engine, with every technique used and what it gained. The data formats are in [docs/FORMAT.md](docs/FORMAT.md).
 The story of how it was done is [blog.md](blog.md).
 
 Some working artefacts are generated from your disc and not stored here:
