@@ -1,0 +1,63 @@
+=== JUNGU01.DLL segment 1 — 38 imported call sites
+  seg1:005c  USER.421         WVSPRINTF
+  seg1:0078  KERNEL.115       OUTPUTDEBUGSTRING
+  seg1:0097  KERNEL.4         LOCALINIT
+  seg1:00b7  KERNEL.132       GETWINFLAGS
+  seg1:0115  KERNEL.127       GETPRIVATEPROFILEINT
+  seg1:014f  KERNEL.24        UNLOCKSEGMENT
+  seg1:0191  MMSYSTEM.TIMEGETTIME 
+  seg1:03a0  KERNEL.6         LOCALREALLOC
+  seg1:03aa  KERNEL.5         LOCALALLOC
+  seg1:03bc  KERNEL.36        GETCURRENTTASK
+  seg1:03f8  KERNEL.7         LOCALFREE
+  seg1:0443  KERNEL.36        GETCURRENTTASK
+  seg1:04d9  KERNEL.90        LSTRLEN
+  seg1:064b  USER.111         SENDMESSAGE
+  seg1:0af4  KERNEL.74        OPENFILE
+  seg1:0b34  KERNEL.88        LSTRCPY
+  seg1:0b87  KERNEL.88        LSTRCPY
+  seg1:0bbc  KERNEL.88        LSTRCPY
+  seg1:0c03  KERNEL.88        LSTRCPY
+  seg1:0c22  KERNEL.90        LSTRLEN
+  seg1:0c39  KERNEL.89        LSTRCAT
+  seg1:0c4a  KERNEL.89        LSTRCAT
+  seg1:0c63  KERNEL.88        LSTRCPY
+  seg1:0c85  KERNEL.49        GETMODULEFILENAME
+  seg1:0ca4  KERNEL.88        LSTRCPY
+  seg1:0cb5  KERNEL.88        LSTRCPY
+  seg1:1106  KERNEL.178       __WINFLAGS
+  seg1:111c  KERNEL.137       FATALAPPEXIT
+  seg1:1339  KERNEL.114       __AHINCR
+  seg1:1344  KERNEL.114       __AHINCR
+  seg1:136f  KERNEL.114       __AHINCR
+  seg1:137b  KERNEL.114       __AHINCR
+  seg1:13b2  KERNEL.114       __AHINCR
+  seg1:13bd  KERNEL.114       __AHINCR
+  seg1:14b5  KERNEL.113       __AHSHIFT
+  seg1:1eb7  KERNEL.137       FATALAPPEXIT
+  seg1:1ec0  KERNEL.1         FATALEXIT
+  seg1:2047  KERNEL.114       __AHINCR
+=== JUNGU01.DLL segment 2 — 14 imported call sites
+  seg2:12da  KERNEL.15        GLOBALALLOC
+  seg2:1300  KERNEL.191       GLOBALPAGELOCK
+  seg2:1317  KERNEL.18        GLOBALLOCK
+  seg2:1334  KERNEL.21        GLOBALHANDLE
+  seg2:1350  KERNEL.17        GLOBALFREE
+  seg2:136e  KERNEL.21        GLOBALHANDLE
+  seg2:13c4  KERNEL.192       GLOBALPAGEUNLOCK
+  seg2:13f1  KERNEL.16        GLOBALREALLOC
+  seg2:1431  KERNEL.191       GLOBALPAGELOCK
+  seg2:143f  KERNEL.18        GLOBALLOCK
+  seg2:1498  KERNEL.21        GLOBALHANDLE
+  seg2:14a4  KERNEL.20        GLOBALSIZE
+  seg2:14e0  KERNEL.184       GLOBALDOSALLOC
+  seg2:1552  KERNEL.185       GLOBALDOSFREE
+=== JUNGU01.DLL segment 4 — 4 imported call sites
+  seg4:0223  KERNEL.178       __WINFLAGS
+  seg4:0539  USER.104         MESSAGEBEEP
+  seg4:054e  USER.1           MESSAGEBOX
+  seg4:066d  KERNEL.113       __AHSHIFT
+=== JUNGU01.DLL segment 6 — 1 imported call sites
+  seg6:268c  WIN87EM.1        
+
+57 call sites, 55 resolved to a meaningful name (96%)

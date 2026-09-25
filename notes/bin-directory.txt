@@ -1,0 +1,60 @@
+=== JUNGBUGD.BIN (5198829 bytes, 3 entries) ===
+  @0060 ->     64251  4e 78 ce d4 bd 23 a4 50 d6 12 83 57 ae 0e 39 eb df 25 97 c2 95 54 73 f9  |Nx...#.P...W..9..%...Ts.|
+  @0064 ->    129231  ee 85 97 16 0e 8f 03 8d 71 ad cd c0 85 e5 d2 de 5b db 7c 3f 68 51 78 07  |........q.......[.|?hQx.|
+  @0068 ->    130268  53 54 e0 fa d5 59 43 08 83 10 00 cb 09 73 fc 28 5a 64 28 87 11 4a ca 46  |ST...YC......s.(Zd(..J.F|
+  gap: table ends 0x6c, first entry 0xfafb
+
+=== JUNGBURP.BIN (5287501 bytes, 2 entries) ===
+  @0060 ->     63141  0a 7f 0a 52 0a ff 05 0e 00 00 15 0b 04 0a fd 0b 14 39 00 00 32 00 7f 0a  |...R.............9..2...|
+  @0064 ->     74365  15 0b 08 00 04 15 02 00 ff 20 0f 15 0f 00 0e 15 0f 0f 15 0b 0f 15 0b 00  |......... ..............|
+  gap: table ends 0x68, first entry 0xf6a5
+
+=== JUNGCRED.BIN (1693008 bytes, 1 entries) ===
+  @0060 ->      1735  64 53 c3 e1 43 81 64 84 3b be d0 56 56 0a c1 5b a2 e4 91 67 4f b7 f4 b2  |dS..C.d.;..VV..[...gO...|
+  gap: table ends 0x64, first entry 0x6c7
+
+=== JUNGHIPP.BIN (10968504 bytes, 4 entries) ===
+  @0060 ->     64936  41 93 c1 f1 35 86 e4 bb 34 84 e4 9b 2e b1 af 26 04 96 07 ea e7 8e 1b db  |A...5...4......&........|
+  @0064 ->    129708  36 a4 b8 c8 82 a3 ce 5b cc 78 28 14 87 7c b9 a0 93 26 62 91 b9 86 15 8c  |6......[.x(..|...&b.....|
+  @0068 ->    194359  0f 10 5a 11 7d c4 91 05 ee fa 35 88 08 ab 35 04 31 f1 28 e4 62 8a ed 12  |..Z.}.....5...5.1.(.b...|
+  @006c ->    204756  0e 13 16 0c 0b 0d fe 17 03 13 fd 12 0e 0b 0f f6 12 13 13 1b 1b 12 13 0e  |........................|
+  gap: table ends 0x70, first entry 0xfda8
+
+=== JUNGINT1.BIN (4577292 bytes, 1 entries) ===
+  @0060 ->     12453  0a 0f fd 15 18 10 0d fb 0c 0e 14 1c 0c 0f fd 15 17 05 0d fc 0c 15 0e 12  |........................|
+  gap: table ends 0x64, first entry 0x30a5
+
+=== JUNGINT2.BIN (2102007 bytes, 1 entries) ===
+  @0060 ->      6628  15 2a 0f fd 15 16 3f 0d fd 18 15 0f 0f fa 1c 0e 0f 0e 15 05 00 00 06 00  |.*....?.................|
+  gap: table ends 0x64, first entry 0x19e4
+
+=== JUNGLE.BIN (1489238 bytes, 1 entries) ===
+  @0060 ->      2003  24 e4 a0 94 92 a2 56 4b 09 69 2e 25 e4 c0 98 93 22 66 4d 09 a9 36 26 e4  |$.....VK.i.%...."fM..6&.|
+  gap: table ends 0x64, first entry 0x7d3
+
+=== JUNGMAIN.BIN (7148491 bytes, 1 entries) ===
+  @0060 ->     53538  a6 20 43 40 c2 09 c7 38 fb f7 33 e6 88 82 0e 41 08 39 07 c4 63 35 c3 92  |. C@...8..3....A.9..c5..|
+  gap: table ends 0x64, first entry 0xd122
+
+=== JUNGOPTS.BIN (839193 bytes, 1 entries) ===
+  @0060 ->     13769  16 0c 0c 0d fe 15 11 0f fd 15 0e 08 0d fd 18 15 05 0f fd 15 1c 0a 0f fc  |........................|
+  gap: table ends 0x64, first entry 0x35c9
+
+=== JUNGPINB.BIN (5246709 bytes, 2 entries) ===
+  @0060 ->     64723  09 3f 08 31 00 bb 14 34 ec 45 bb b3 40 28 45 04 bb 34 30 84 d0 82 13 43  |.?.1...4.E..@(E..40....C|
+  @0064 ->    122892  22 02 07 26 2c c5 07 83 38 25 ca 60 78 2d d8 68 1a 19 d1 aa 5d 07 c9 4a  |"..&,...8%.`x-.h....]..J|
+  gap: table ends 0x68, first entry 0xfcd3
+
+=== JUNGPRTY.BIN (5620186 bytes, 1 entries) ===
+  @0060 ->     36495  c0 93 52 92 4d 0c 19 45 30 a5 6c b3 96 10 44 2c 81 80 31 18 02 fc 24 82  |..R.M..E0.l...D,..1...$.|
+  gap: table ends 0x64, first entry 0x8e8f
+
+=== JUNGSCOR.BIN (2256717 bytes, 1 entries) ===
+  @0060 ->     30494  43 59 06 18 60 44 46 b5 4d 0c c3 5b 78 fa 16 66 bd 5a 6e d8 25 0e d2 81  |CY..`DF.M..[x..f.Zn.%...|
+  gap: table ends 0x64, first entry 0x771e
+
+=== JUNGSHOT.BIN (9342531 bytes, 2 entries) ===
+  @0060 ->     64954  0a 43 0a 02 12 fe 15 3c 00 00 2e 00 fe 13 06 0b 7f 0a 7f 0a 53 0a fb 0b  |.C.....<............S...|
+  @0064 ->    125922  0e 10 15 f6 14 0e 13 0e 0e 15 13 0e 15 03 18 fd 16 0e 03 15 02 0e fa 14  |........................|
+  gap: table ends 0x68, first entry 0xfdba
+

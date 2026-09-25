@@ -1,0 +1,24 @@
+*.iso
+*.o
+*.pyc
+__pycache__/
+assets_extracted/
+build/
+ghidra_projects/
+orig/cd/
+guest/
+src_match/**/*.OBJ
+src_match/**/*.DLL
+src_match/**/*.MAP
+src_match/**/*.LOG
+src_match/**/sweep.cmd
+
+# generated from your own disc; never committed
+reference/
+notes/decomp/
+notes/script-*.txt
+build/
+web/dist/
+/jungle
+/jungle.exe
+orig/cd

@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#1d3a16">
+<title>Jungle Games</title>
+<meta name="description" content="Timon &amp; Pumbaa's Jungle Games, played in the browser on a reimplementation of 7th Level's engine.">
+<style>
+  /* The page is dressed as one of the game's own screens. The art (ui/*) is
+   * made from the disc by tools/web_ui.py; without it the page still works,
+   * just plainly. */
+  @font-face { font-family: "Hyena"; src: url("ui/hyena.ttf") format("truetype"); font-display: swap; }
+  :root { --ink: #4a2a10; --cream: #f7e2b4; --wood: #7a4a22; --leaf: #1d3a16; --leaf2: #2f5a22; --sun: #f2b53c; --progress: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    background: radial-gradient(120% 90% at 50% 0%, var(--leaf2), var(--leaf) 60%, #0e1e0b);
+    color: var(--ink); font: 20px/1.35 "Hyena", "Chalkboard SE", "Comic Sans MS", system-ui, sans-serif;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; min-height: 100dvh;
+    padding: max(12px, env(safe-area-inset-top)) 12px max(16px, env(safe-area-inset-bottom));
+    -webkit-font-smoothing: antialiased;
+  }
+  /* the screen: 4:3, the game's backdrop, everything placed on it in % */
+  .screen { position: relative; width: min(100%, 880px, calc((100vh - 40px) * 4 / 3)); aspect-ratio: 4 / 3;
+            background: #3b5d23 url("ui/backdrop.jpg") center / 100% 100% no-repeat; border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0,0,0,.55); overflow: hidden; container-type: inline-size; }
+  .sprite { position: absolute; background-repeat: no-repeat; pointer-events: none; }
+
+  /* inside the backdrop's parchment */
+  #setup { position: absolute; left: 17%; right: 17%; top: 14%; bottom: 19%;
+           display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 2.4cqw; }
+  h1 { margin: 0; font-weight: normal; line-height: .95;
+       text-shadow: 2px 2px 0 var(--cream), -2px -2px 0 var(--cream), 2px -2px 0 var(--cream), -2px 2px 0 var(--cream), 0 5px 0 rgba(122,74,34,.5); }
+  h1 small { display: block; font-size: 4.2cqw; }
+  h1 span { display: block; font-size: 10cqw; }
+  #status { margin: 0; font-size: 3.4cqw; min-height: 1.4em; }
+  .note { margin: 0; font-size: 2.6cqw; opacity: .8; }
+
+  /* Pumbaa trots along as the loading bar */
+  #track { position: relative; width: 88%; height: 15cqw; }
+  #track::before, #track::after { content: ""; position: absolute; left: 0; bottom: 6%; height: .9cqw; border-radius: 1cqw; }
+  #track::before { right: 0; background: rgba(122,74,34,.25); }
+  #track::after { width: calc(var(--progress) * 100%); background: var(--wood); transition: width .25s; }
+  #pumbaa { bottom: 0; height: 100%; aspect-ratio: 428 / 410; left: calc(var(--progress) * (100% - 15cqw)); transition: left .25s;
+            background-image: url("ui/pumbaa.png"); background-size: 800% 100%; animation: pumbaa .64s steps(8, jump-none) infinite; }
+  @keyframes pumbaa { from { background-position-x: 0; } to { background-position-x: 100%; } }
+  #track.done #pumbaa { animation: none; background-position-x: 0; }
+
+  /* wooden-framed signs: the PAUSE sign's border around parchment */
+  .sign { font: inherit; color: var(--ink); cursor: pointer; background: #f1d7a2;
+          border: 2.2cqw solid transparent; border-image: url("ui/frame.png") 36 / 2.2cqw round;
+          padding: 0 2.4cqw; font-size: 6cqw; line-height: 1.15; filter: drop-shadow(0 .6cqw .4cqw rgba(0,0,0,.35));
+          transition: transform .08s; -webkit-tap-highlight-color: transparent; }
+  .sign:hover { transform: rotate(-2deg) scale(1.05); }
+  .sign:active { transform: scale(.95); }
+  .sign.small { font-size: 2.8cqw; border-width: 1.4cqw; border-image-width: 1.4cqw; padding: 0 1.4cqw; }
+  #play { animation: nudge 2.4s ease-in-out infinite; }
+  @keyframes nudge { 0%, 70%, 100% { transform: rotate(0); } 78% { transform: rotate(-4deg); } 86% { transform: rotate(3deg); } }
+  .row { display: flex; gap: 1.5cqw; flex-wrap: wrap; justify-content: center; }
+  label.sign input { display: none; }
+
+  /* the cast, round the frame */
+  #zazu { width: 24%; aspect-ratio: 374 / 238; left: 2%; top: 0; background-image: url("ui/zazu.png"); background-size: 900% 100%;
+          animation: zazu .81s steps(9, jump-none) infinite, bob 3.4s ease-in-out infinite; }
+  @keyframes zazu { from { background-position-x: 0; } to { background-position-x: 100%; } }
+  @keyframes bob { 50% { transform: translate(10%, 12%) rotate(-5deg); } }
+  #snake { width: 13%; aspect-ratio: 280 / 426; right: -1.5%; top: 22%; background-image: url("ui/snake.png"); background-size: 800% 100%;
+           animation: snake 1.28s steps(8, jump-none) infinite; }
+  @keyframes snake { from { background-position-x: 0; } to { background-position-x: 100%; } }
+  #timon { width: 22%; aspect-ratio: 376 / 320; right: 2%; bottom: -1%; background-image: url("ui/timon.png"); background-size: 600% 100%;
+           animation: timon .84s steps(6, jump-none) infinite alternate; }
+  @keyframes timon { from { background-position-x: 0; } to { background-position-x: 100%; } }
+  #pelican { width: 17%; aspect-ratio: 1; left: -3%; bottom: 7%; background-image: url("ui/pelican.png"); background-size: 400% 100%;
+             animation: pelican .88s steps(4, jump-none) infinite; }
+  @keyframes pelican { from { background-position-x: 0; } to { background-position-x: 100%; } }
+
+  /* playing: the canvas fills the screen */
+  #stage { display: none; position: absolute; inset: 0; background: #000; }
+  canvas { display: block; width: 100%; height: 100%; }
+  canvas:focus { outline: none; }
+  body.playing .cast, body.playing #setup { display: none; }
+  body.playing #stage { display: block; }
+
+  .below { width: min(100%, 880px); margin-top: 10px; text-align: center; color: var(--cream); font-size: 17px; }
+  #rotate { display: none; }
+  /* size while playing: fit the window (largest 4:3 that fits, never stretched) or the original 800x600 */
+  body.playing .screen { width: min(calc(100vw - 24px), calc((100dvh - 130px) * 4 / 3)); }
+  body.playing.orig .screen { width: min(800px, calc(100vw - 24px), calc((100dvh - 130px) * 4 / 3)); }
+  #size { display: none; margin-top: 8px; }
+  body.playing #size { display: inline-block; }
+  @media (pointer: coarse) { body.playing #size { display: none; } }
+  @media (pointer: coarse) and (orientation: portrait) { body.playing #rotate { display: block; } }
+  #pad { display: none; justify-content: space-between; gap: 10px; margin: 8px auto 0; user-select: none; -webkit-user-select: none; touch-action: none; }
+  @media (pointer: coarse) { body.playing #pad { display: flex; } .keys { display: none; } }
+  #pad .cl { display: grid; gap: 8px; }
+  #pad .arrows { grid-template-columns: repeat(3, 58px); grid-template-rows: repeat(2, 50px); }
+  #pad .acts { grid-template-columns: repeat(3, 66px); grid-template-rows: repeat(2, 50px); }
+  #pad button { font: 22px/1 "Hyena", system-ui, sans-serif; color: var(--ink); padding: 0; background: #f1d7a2;
+                border: 10px solid transparent; border-image: url("ui/frame.png") 36 / 10px round;
+                -webkit-tap-highlight-color: transparent; }
+  #pad button.w { font-size: 15px; }
+  #pad button.on { background: var(--sun); transform: scale(.94); }
+  /* a phone on its side while playing: a handheld, arrows left of the game, buttons right */
+  @media (pointer: coarse) and (orientation: landscape) {
+    body.playing { padding: 6px; }
+    body.playing .screen { width: min(calc(100vw - 330px), calc((100dvh - 12px) * 4 / 3)); border-radius: 6px; }
+    body.playing .below { position: fixed; inset: 0; margin: 0; width: auto; pointer-events: none; display: flex; align-items: center; }
+    body.playing #pad { width: 100%; margin: 0; align-items: center;
+                        padding: 0 max(8px, env(safe-area-inset-right)) 0 max(8px, env(safe-area-inset-left)); }
+    body.playing #pad .cl { pointer-events: auto; }
+    body.playing #pad .arrows { grid-template-columns: repeat(3, 48px); grid-template-rows: repeat(2, 52px); }
+    body.playing #pad .acts { grid-template-columns: repeat(2, 60px); grid-template-rows: repeat(3, 44px); }
+    body.playing #pad button { font-size: 18px; }
+  }
+</style>
+</head>
+<body>
+  <div class="screen">
+    <div class="cast">
+      <div class="sprite" id="zazu"></div>
+      <div class="sprite" id="snake"></div>
+      <div class="sprite" id="pelican"></div>
+      <div class="sprite" id="timon"></div>
+    </div>
+
+    <section id="setup">
+      <h1><small>Timon &amp; Pumbaa's</small><span>Jungle Games</span></h1>
+      <div id="track"><div class="sprite" id="pumbaa"></div></div>
+      <p id="status">Loading…</p>
+      <div class="row" style="display:none">
+        <label class="sign small">Choose JUNGLE folder<input id="dir" type="file" webkitdirectory multiple></label>
+        <label class="sign small">Choose disc image<input id="iso" type="file" accept=".iso,.img,.bin"></label>
+      </div>
+      <button id="play" class="sign" style="display:none">Play!</button>
+      <button id="forget" class="sign small" style="display:none">Forget stored disc</button>
+      <p class="note">Hakuna matata</p>
+    </section>
+
+    <section id="stage">
+      <canvas id="canvas" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
+    </section>
+  </div>
+
+  <div class="below">
+    <div class="keys">Each game shows its keys on its rules panel.</div>
+    <button id="size" class="sign small" title="Switch between filling the window and the game's original 800x600">Original size</button>
+    <div id="rotate">Turn your phone sideways for a bigger picture.</div>
+    <div id="pad">
+      <div class="cl arrows">
+        <span></span><button data-vk="38">&#9650;</button><span></span>
+        <button data-vk="37">&#9664;</button><button data-vk="40">&#9660;</button><button data-vk="39">&#9654;</button>
+      </div>
+      <div class="cl acts">
+        <button data-vk="90">Z</button><button data-vk="88">X</button><button data-vk="191">/</button>
+        <button data-vk="32" class="w">Space</button><button data-vk="13" class="w">Enter</button><button data-vk="27" class="w">Esc</button>
+      </div>
+    </div>
+  </div>
+<script src="loader.js?v=1790357658"></script>
+</body>
+</html>
