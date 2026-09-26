@@ -414,10 +414,15 @@ static s16 builtin(Engine *e, int id, s16 *a, int argc)
         free(sp->prog); memset(sp, 0, sizeof *sp);
         return 1;
     }
-    case 0x6C: {                                     /* S_072: hold or release animation (0 = all) */
-        int on = argc > 0 && a[0] != 0, which = argc > 1 ? (u16)a[1] : 0;
-        for (int i = 0; i < ENG_MAX_SPRITES; i++)
-            if (e->spr[i].used && (!which || e->spr[i].res == which)) e->spr[i].frozen = on;
+    case 0x6C: {                                     /* S_072 (sprite, on): hold or release animation, 0 = all */
+        int which = argc > 0 ? (u16)a[0] : 0, on = argc > 1 && a[1] != 0;
+        for (int i = 0; i < ENG_MAX_SPRITES; i++) {  /* JUNGS01 FUN_1000_60f0 */
+            Sprite *s = &e->spr[i];
+            if (!s->used || (which && s->res != which) || s->frozen == on) continue;
+            if (on) s->held_at = e->now;
+            else s->fdue += e->now - s->held_at;     /* the frame timer resumes where it was held */
+            s->frozen = on;
+        }
         return 0;
     }
     case 0x6D: {                                     /* pause or resume the timers, FUN_1008_e04a */

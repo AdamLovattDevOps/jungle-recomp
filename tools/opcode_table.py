@@ -69,7 +69,21 @@ def build():
     return table, dynamic
 
 
-STATIC, DYNAMIC = build()
+def from_engine():
+    """The same table as the engine carries it (OPCODE_LEN in src/jungle.c),
+    for when the Ghidra export is not on this machine (notes/decomp is not
+    committed). Every -1 there is either handled by the walkers directly or
+    unused, so it counts as dynamic."""
+    text = (ROOT / "src" / "jungle.c").read_text()
+    body = text[text.index("OPCODE_LEN[256] = {"):]
+    body = body[body.index("{") + 1:body.index("};")]
+    vals = [int(v) for v in re.findall(r"-?\d+", re.sub(r"/\*.*?\*/", "", body))]
+    table = {op: n for op, n in enumerate(vals) if n >= 0}
+    dynamic = {op: "engine table" for op, n in enumerate(vals) if n < 0}
+    return table, dynamic
+
+
+STATIC, DYNAMIC = build() if SRC.exists() else from_engine()
 
 
 def main():

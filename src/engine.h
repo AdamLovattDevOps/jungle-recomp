@@ -26,6 +26,7 @@ typedef struct {
     u32   fdue, fper, mdue, mper; int catchup;
     int   brk;                       /* +0x5a: LOOP records fall through (S_004) */
     int   frozen;                    /* S_072: animation held */
+    u32   held_at;                   /* +0x24: when it was held */
     s16   user;                      /* +0x3e: a word scripts keep on the sprite (S_078/S_079) */
     u8    hit_hidden, hit_rect;      /* +0x5d / +0x5e from type 15 +0x13 / +0x0f (S_058) */
 
