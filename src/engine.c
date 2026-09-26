@@ -1500,8 +1500,11 @@ static int exec_record(Engine *e, const u8 *b, size_t pc, size_t n, int *adv)
         if (r[0x0D]) { e->ncol = 0; return 1; }      /* FUN_1008_084c: clear them all */
         int a = as_index(V(2)), b = as_index(V(4));
         if (!sprite_find(e, a) || !sprite_find(e, b)) return 0;
-        u8 fa = r[0x0F], fb = r[0x0E];
-        if (b < a) { int t = a; a = b; b = t; fa = r[0x0E]; fb = r[0x0F]; }
+        /* +0E goes with the first sprite, +0F with the second (31b8 swaps them
+         * with the sprites; 347e hands them to S_048 as hidA, hidB). Pinball's
+         * GRUB lane sensors are hidden until lit and rely on theirs. */
+        u8 fa = r[0x0E], fb = r[0x0F];
+        if (b < a) { int t = a; a = b; b = t; fa = r[0x0F]; fb = r[0x0E]; }
         int k;
         for (k = 0; k < e->ncol; k++) if (e->col[k].a == a && e->col[k].b == b) break;
         s16 sc = W(6) ? V(6) : 0;

@@ -158,3 +158,15 @@ constant, `COLLIDE`, ray-to-box (op 50), the long-arithmetic builtins, sprite pl
 The point-on-sprite test also reads RLE bitmaps the way `FUN_1000_304e` does. It walks the
 compressed row with no end-of-row check, so a point past a row's last encoded pixel reads on into
 the next row's bytes rather than returning transparent.
+
+## Port bugs fixed
+
+**Op 33's "hidden counts" flags were crossed.** A collision pair's record carries one flag per
+sprite saying whether it still collides while hidden: +0E for the first sprite, +0F for the
+second. `FUN_1008_31b8` keeps each with its sprite when it orders the pair, and `347e` passes
+them to S_048 (JUNGS01 ordinal 49, `1000:09be`) as the first and second sprite's. The port had
+them the other way round. Pinball's GRUB lane sensors (1533–1539, script 1496, set up by 1489)
+are the only pairs registered in a bot run of every game whose two flags differ: the sensor is
+hidden until its letter is lit and is the one marked to count while hidden. With the flags
+crossed, a ball rolled through G, R, U and B without lighting them, so the GRUB bonus could never
+be earned.
