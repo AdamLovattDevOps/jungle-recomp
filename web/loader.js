@@ -162,6 +162,6 @@ setSize(startOrig);
 $('size').addEventListener('click', () => { setSize(!document.body.classList.contains('orig')); $('canvas').focus(); });
 
 window.Module = Module;
-const BUILD = '1790357658';                            // cache-busting: every URL is versioned
+const BUILD = '1790620985';                            // cache-busting: every URL is versioned
 Module.locateFile = (path) => path + '?v=' + BUILD;
 const s = document.createElement('script'); s.src = 'jungle.js?v=' + BUILD; document.body.appendChild(s);
