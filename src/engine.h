@@ -26,15 +26,22 @@ typedef struct {
     u32   fdue, fper, mdue, mper; int catchup;
     int   brk;                       /* +0x5a: LOOP records fall through (S_004) */
     int   frozen;                    /* S_072: animation held */
+    u8    pend;                      /* +0x51: a set range's first cel is due at the next move (FUN_1000_63ee) */
     u32   held_at;                   /* +0x24: when it was held */
     s16   user;                      /* +0x3e: a word scripts keep on the sprite (S_078/S_079) */
     u8    hit_hidden, hit_rect;      /* +0x5d / +0x5e from type 15 +0x13 / +0x0f (S_058) */
+    u8    host_hidden;               /* not drawn: a host draws it its own way (the remastered 3D ball) */
+    struct {                         /* a movie playing in the sprite: sprite command 22 */
+        int on, n, ms, shown, index, data;
+        u32 t0;
+        u8 *px; int w, h, ox, oy;    /* the frame on show, top-down, and its top-left from the anchor */
+    } movie;
 
 } Sprite;
 
 typedef struct { const s16 *pcm; u32 n, pos; int loop, res; u16 done, tag; } EngVoice;
 typedef struct { u8 kbd, armed, code; } EngKey;
-typedef struct { u16 script; u8 code, buttons; } EngPlayer;
+typedef struct { u16 script; u8 code, buttons, kind, dev; } EngPlayer;   /* kind +0x1fb, dev +0x1ff: the bound device */
 
 typedef struct {
     const char *dir;                 /* disc directory holding the .BIN files */
@@ -47,6 +54,8 @@ typedef struct {
     u16         post_script;         /* DAT_1020_14e0, run once after load */
     u16         focus_script;        /* DAT_1020_14e6 */
     char        pending[16];         /* op 18 target, loaded on the next tick */
+    char        prev[16];            /* the scene we came from (DS:0x150e), op 18's "back" */
+    int         quit;                /* op 18 back with nowhere to go: the original posts WM_CLOSE */
     int         bg;                  /* background bitmap index, -1 none */
     int         bgfill;              /* -1, or palette index to fill with */
     int         bind_vk[ENG_MAX_BINDS], bind_to[ENG_MAX_BINDS], nbind;   /* kept for reports */
@@ -92,8 +101,15 @@ typedef struct {
     struct { char sec[64], key[64], val[128]; } *ini; int nini;
     u32         now;
     int         trace;
-    unsigned    unimpl_rec[256], unimpl_builtin[256];
+    unsigned    unimpl_rec[256], unimpl_builtin[256], unimpl_t13[32];
     u8          mheld;               /* mouse buttons held, bit 1 left, bit 2 right */
+    u16         pause_script;        /* DAT_1020_14e8, op 35 */
+    u8          paused;              /* DAT_1020_5a5d: the Pause key's toggle */
+    u8          kbd_input, joy_input;   /* DAT_1020_5a53 / 5a52: some player is on a keyboard / a joystick */
+    u8          mousejoy, joy_mode;  /* DAT_1020_5a54: the mouse is a player's joystick; 5a57 (builtin 0x6E) */
+    u8          mj_last;             /* DAT_1020_48ca: the mouse joystick's last direction */
+    u8          audio_paused;        /* JUNGA01 ordinal 25 (builtin 0x70) */
+    struct { int dx, dy; u32 t0; } jolt;   /* JUNGS01 ordinal 77 (builtin 0x78): the screen scrolled and back */
     struct { s16 x, y; u32 since; int tries; } unstick[3];   /* pinball_unstick, per ball */
 } Engine;
 
@@ -116,7 +132,12 @@ void engine_keystate(Engine *e, int vk, int down);  /* held state for GetKeyStat
 void engine_char(Engine *e, int c);
 int  engine_edit_len(Engine *e);                    /* characters in the text field being typed into, -1 none */
 s16  engine_builtin(Engine *e, int id, s16 *a, int argc);  /* call a script builtin, for tests */
-int  engine_sprite_rect(Engine *e, int res, int *l, int *t, int *r, int *b);   /* canvas pixels; 0 if absent */                  /* a typed character (WM_CHAR): text entry */
+int  engine_sprite_rect(Engine *e, int res, int *l, int *t, int *r, int *b);
+int  engine_t13_len(const u8 *p, size_t left);   /* a sprite-program record's length, 0 unknown */
+int  engine_sprite_hit(Engine *e, int res, int x, int y);   /* canvas pixel solid in the sprite, shown or not */
+void engine_host_hide(Engine *e, int res, int hidden);      /* leave a sprite out of the frame; play is untouched */
+int  engine_sprite_show(Engine *e, int res, int on);        /* show or hide a sprite, as a script would; 0 if absent */
+int  engine_sprite_shown(Engine *e, int res);   /* canvas pixels; 0 if absent */                  /* a typed character (WM_CHAR): text entry */
 void engine_mouse(Engine *e, int x, int y, int button, int down);  /* button 0 = move */
 void engine_render(Engine *e, u8 *fb);                  /* ENG_W x ENG_H, 8-bit */
 void engine_free(Engine *e);

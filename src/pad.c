@@ -60,6 +60,38 @@ void pad_event(const SDL_Event *ev)
 
 void pad_pointer(int x, int y) { px = (float)x; py = (float)y; }
 
+/* A keyboard key as the Windows virtual key the games read; 0 for none. */
+int pad_key_vk(const SDL_Keysym *ks)
+{
+    SDL_Keycode k = ks->sym;
+    int vk = 0;
+    if (k == SDLK_ESCAPE) vk = 0x1B; else if (k == SDLK_SPACE) vk = 0x20;
+    else if (k == SDLK_BACKSPACE) vk = 0x08;
+    /* iPad keyboards have no Esc: ` (where Esc sits) and Cmd+. stand in for it */
+    else if (k == SDLK_BACKQUOTE) vk = 0x1B;
+    else if (k == SDLK_PERIOD && (ks->mod & KMOD_GUI)) vk = 0x1B;
+    else if (k == SDLK_RETURN) vk = 0x0D;
+    else if (k == SDLK_PAUSE) vk = 0x13;
+    else if (k == SDLK_LEFT) vk = 0x25; else if (k == SDLK_UP) vk = 0x26;
+    else if (k == SDLK_RIGHT) vk = 0x27; else if (k == SDLK_DOWN) vk = 0x28;
+    else if (k == SDLK_KP_PLUS) vk = 0x6B; else if (k == SDLK_KP_MINUS) vk = 0x6D;
+    else if (k == SDLK_KP_MULTIPLY) vk = 0x6A;
+    else if (k == SDLK_SLASH) vk = 0xBF;
+    /* the OEM keys: Bug Drop's player one rotates with , and . (< and >) */
+    else if (k == SDLK_COMMA) vk = 0xBC; else if (k == SDLK_PERIOD) vk = 0xBE;
+    else if (k == SDLK_SEMICOLON) vk = 0xBA; else if (k == SDLK_QUOTE) vk = 0xDE;
+    else if (k == SDLK_MINUS) vk = 0xBD; else if (k == SDLK_EQUALS) vk = 0xBB;
+    else if (k == SDLK_LEFTBRACKET) vk = 0xDB; else if (k == SDLK_RIGHTBRACKET) vk = 0xDD;
+    else if (k == SDLK_BACKSLASH) vk = 0xDC;
+    else if (k == SDLK_LCTRL || k == SDLK_RCTRL) vk = 0x11;
+    else if (k == SDLK_LSHIFT || k == SDLK_RSHIFT) vk = 0x10;
+    else if (k >= SDLK_F1 && k <= SDLK_F12) vk = 0x70 + (k - SDLK_F1);
+    else if (k >= SDLK_a && k <= SDLK_z) vk = 0x41 + (k - SDLK_a);
+    else if (k >= SDLK_0 && k <= SDLK_9) vk = 0x30 + (k - SDLK_0);
+    return vk;
+}
+
+
 static int btn(Pad *p, int b) { return SDL_GameControllerGetButton(p->gc, (SDL_GameControllerButton)b); }
 static int trig(Pad *p, int a) { return SDL_GameControllerGetAxis(p->gc, (SDL_GameControllerAxis)a) > 12000; }
 static int pressed(Pad *p, int b) { return btn(p, b) && !p->prev[b]; }
@@ -293,4 +325,16 @@ void pad_update(Engine *e, unsigned dt, const PadHost *host)
         if (wm[b] && e->fade.dir) continue;
         engine_mouse(e, (int)px, (int)py, b, wm[b]); mheld[b] = wm[b];
     }
+}
+
+/* Rumble on every pad. SDL passes it through Steam Input's virtual pad too; a pad
+ * without motors, or without trigger motors, ignores the call. */
+void pad_rumble(Uint16 low, Uint16 high, Uint32 ms)
+{
+    for (int i = 0; i < npads; i++) SDL_GameControllerRumble(pads[i].gc, low, high, ms);
+}
+
+void pad_rumble_triggers(Uint16 left, Uint16 right, Uint32 ms)
+{
+    for (int i = 0; i < npads; i++) SDL_GameControllerRumbleTriggers(pads[i].gc, left, right, ms);
 }

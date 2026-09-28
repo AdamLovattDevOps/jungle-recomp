@@ -159,7 +159,7 @@ def play(game, ini, name='bot', seed=1, shot=None, table=None):
         elif game == 'burper':
             mash(g, ini, [0x58, 0x58, 0x25, 0x27], rng)
         elif game == 'pinball':
-            pinball(g, ini, y_lo=215, y_hi=280, hold=250, x_span=160)
+            pinball(g, ini, y_lo=215, y_hi=280, hold=250, x_span=160, limit_ms=4 * 3600000)   # a good game runs long
         elif game == 'bugdrop':
             for _ in range(15):                            # "Player choose your log": the left one
                 g.click(190, 330); g.run(2000)

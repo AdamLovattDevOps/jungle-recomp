@@ -23,5 +23,8 @@ void pad_init(void);                           /* opens the pads already connect
 void pad_event(const SDL_Event *ev);           /* hot-plug */
 void pad_pointer(int x, int y);                /* the real mouse moved: canvas pixels */
 void pad_update(Engine *e, unsigned dt_ms, const PadHost *host);
+int  pad_key_vk(const SDL_Keysym *ks);         /* keyboard key -> Windows virtual key, 0 none */
+void pad_rumble(Uint16 low, Uint16 high, Uint32 ms);          /* every pad; no-op without motors */
+void pad_rumble_triggers(Uint16 left, Uint16 right, Uint32 ms);
 
 #endif

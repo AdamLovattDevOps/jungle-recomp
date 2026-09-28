@@ -201,6 +201,8 @@ def t_options(tmp):
     """Options: turn music off and exit; the choice is saved."""
     r = engine(tmp, 'opts', 'JUNGOPTS', 20000, '6000=@556:201,9000=@460:296', SEASONED)
     yield r.ini_value('MusicOff', SECTION) == '1', 'MusicOff=1 saved (got %r)' % r.ini_value('MusicOff', SECTION)
+    r = engine(tmp, 'opts_back', 'JUNGMAIN', 62000, '45000=@385:72,54000=@460:296', SEASONED)
+    yield r.scene == 'JUNGMAIN', 'OK goes back to the menu it came from (ended in %s)' % r.scene
 
 
 def t_containers(tmp):

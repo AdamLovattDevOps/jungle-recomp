@@ -145,6 +145,9 @@ static void edit_finish(Engine *e, int cancel);
 static int msc_rand(void);
 static void sprite_program(Engine *e, Sprite *s, int res13);
 static void keyboard_enable(Engine *e, int on, int kbd);
+static void device_enable(Engine *e, int kind, int dev, int on);
+static void player_release(Engine *e, int pl);
+static void input_flags(Engine *e);
 static char *str_at(Engine *e, u16 h);
 static int ci_cmp(const char *a, const char *b);
 static s16 call_with(Engine *e, u16 script, int argc, const u16 *args);
@@ -163,8 +166,10 @@ static int sprites_collide(Engine *e, Sprite *A, Sprite *B, int samez, int hid_a
 static int sprite_opaque_at(Engine *e, Sprite *s, int x, int y);
 
 static void sprite_program_bytes(Engine *e, Sprite *s, const u8 *rec, int len, int replace);
+static void sprite_program_now(Engine *e, Sprite *s, const u8 *rec, int len);
 static int set_range(Sprite *s, int first, int last, int start);
 static void step_cel(Sprite *s);
+static void pend_step(Sprite *s);
 
 /* FUN_1000_57d6: a script-issued sprite command. Mode 0 (S_069) appends it to
  * the sprite's program as a type 13 record with raw operands, starting the
@@ -179,13 +184,15 @@ static void sprite_command(Engine *e, Sprite *s, int now, int cmd, const s16 *v,
     PUT(0, cmd);
     switch (cmd) {
     case 1:                                          /* FUN_1000_5344: first, last, ms */
-        PUT(2, RAW(0)); PUT(4, RAW(1)); PUT(8, n > 2 ? RAW(2) : 0xFFFF);
-        sprite_program_bytes(e, s, r, 10, now); return;
+        PUT(2, RAW(0)); PUT(4, RAW(1)); PUT(8, n > 2 ? (now ? (u16)v[2] : RAW(2)) : 0xFFFF);   /* S_067 keeps ms plain */
+        if (now) { sprite_program_now(e, s, r, 10); return; }
+        sprite_program_bytes(e, s, r, 10, 0); return;
     case 2: {                                        /* FUN_1000_53dc: cels..., ms */
         int nc = n - 1; if (nc < 1 || nc > 4) return;
         for (int k = 0; k < 4; k++) PUT(2 + k * 2, k < nc ? RAW(k) : 0);
-        PUT(0x0A, RAW(nc)); r[0x0D] = (u8)nc;
-        sprite_program_bytes(e, s, r, 14, now); return;
+        PUT(0x0A, now ? (u16)v[nc] : RAW(nc)); r[0x0D] = (u8)nc;
+        if (now) { sprite_program_now(e, s, r, 14); return; }
+        sprite_program_bytes(e, s, r, 14, 0); return;
     }
     case 7:                                          /* FUN_1000_55f0 */
         if (now) { s->flipx = n > 0 && v[0]; s->flipy = n > 1 && v[1]; return; }
@@ -206,18 +213,20 @@ static void sprite_command(Engine *e, Sprite *s, int now, int cmd, const s16 *v,
     case 5:                                          /* FUN_1000_54b8: midX, midY, endX, endY, steps, rel */
         PUT(6, RAW(0)); PUT(8, RAW(1)); PUT(0x0A, RAW(2)); PUT(0x0C, RAW(3)); PUT(2, RAW(4));
         r[4] = (u8)(n > 5 && v[5]);
-        sprite_program_bytes(e, s, r, 30, now); return;
+        if (now) { sprite_program_now(e, s, r, 30); return; }
+        sprite_program_bytes(e, s, r, 30, 0); return;
     case 9:                                          /* FUN_1000_56c8: x, y, steps, speedmode, rel */
         PUT(6, RAW(0)); PUT(8, RAW(1)); PUT(2, RAW(2));
         r[4] = (u8)(n > 3 && v[3]); r[5] = (u8)(n > 4 && v[4]);
-        sprite_program_bytes(e, s, r, 22, now); return;
+        if (now) { sprite_program_now(e, s, r, 22); return; }
+        sprite_program_bytes(e, s, r, 22, 0); return;
     case 11:                                         /* FUN_1000_59d4: ms */
         if (now) return;
         PUT(2, RAW(0)); sprite_program_bytes(e, s, r, 6, 0); return;
     case 12: {                                       /* FUN_1000_5a1a: x, y [, rel] */
         if (n < 2) return;
         int rel = n > 2 && v[2];
-        if (now) { if (rel) { s->x += v[0]; s->y += v[1]; } else { s->x = v[0]; s->y = v[1]; } return; }
+        if (now) { pend_step(s); if (rel) { s->x += v[0]; s->y += v[1]; } else { s->x = v[0]; s->y = v[1]; } return; }
         PUT(2, RAW(0)); PUT(4, RAW(1)); r[6] = (u8)rel;
         sprite_program_bytes(e, s, r, 8, 0); return;
     }
@@ -365,11 +374,12 @@ static s16 builtin(Engine *e, int id, s16 *a, int argc)
         wrw(e, pa1, (s16)(rdw(e, pa1) - th));        /* rotate both into the normal's frame */
         wrw(e, pa2, (s16)(rdw(e, pa2) - th));
         int an1 = rdw(e, pa1), an2 = rdw(e, pa2);
-        double c1 = (double)jl_cosine(an1) * sp1 / 10000.0, s1 = (double)jl_sine(an1) * sp1 / 10000.0;
-        double c2 = (double)jl_cosine(an2) * sp2 / 10000.0, s2 = (double)jl_sine(an2) * sp2 / 10000.0;
-        wrw(e, ps1, (s16)(int)sqrt(c2 * c2 + s1 * s1));   /* swap the normal components */
-        wrw(e, ps2, (s16)(int)sqrt(s2 * s2 + c1 * c1));
-        int n1 = (int)(atan2(s1, c2) * 572.9746936176986), n2 = (int)(atan2(s2, c1) * 572.9746936176986);
+        /* each component is a long, truncated (0f12..0f98: imul, then __aFldiv by 10000) */
+        long c1 = (long)jl_cosine(an1) * sp1 / 10000, s1 = (long)jl_sine(an1) * sp1 / 10000;
+        long c2 = (long)jl_cosine(an2) * sp2 / 10000, s2 = (long)jl_sine(an2) * sp2 / 10000;
+        wrw(e, ps1, (s16)(int)sqrt((double)(c2 * c2 + s1 * s1)));   /* swap the normal components */
+        wrw(e, ps2, (s16)(int)sqrt((double)(s2 * s2 + c1 * c1)));
+        int n1 = (int)(atan2((double)s1, (double)c2) * 572.9746936176986), n2 = (int)(atan2((double)s2, (double)c1) * 572.9746936176986);
         wrw(e, pa1, (s16)norm_angle(n1 + th));
         wrw(e, pa2, (s16)norm_angle(n2 + th));
         return 0;
@@ -433,6 +443,22 @@ static s16 builtin(Engine *e, int id, s16 *a, int argc)
             for (int k = 0; k < e->ntm; k++) e->tm[k].due += d;
         }
         e->timers_paused = on;
+        return 0;
+    }
+    case 0x6E: e->joy_mode = argc > 0 && a[0]; return 0;   /* DAT_1020_5a57: how joysticks are read (FUN_1008_4a00); none here */
+    case 0x70: e->audio_paused = argc > 0 && a[0]; return 0;   /* JUNGA01 ordinal 25: hold or resume sound and music */
+    case 0x78:                                       /* JUNGS01 ordinal 77: ScrollDC by (dx, dy), by -2(dx, dy), and back */
+        if (argc > 1) { e->jolt.dx = a[0]; e->jolt.dy = a[1]; e->jolt.t0 = e->now ? e->now : 1; }
+        return 0;
+    case 0x89: {                                     /* FUN_1008_488e: give player a[0] its device back; a[1]: take the other's */
+        if (argc < 2) return 0;
+        int pl = a[0] & 1; EngPlayer *P = &e->player[pl];
+        e->devplayer[P->dev & 7] = (u8)a[0];
+        if (a[1]) {
+            int q = (pl + 1) & 1; EngPlayer *Q = &e->player[q];
+            if (Q->dev && e->devplayer[Q->dev & 7] == q) device_enable(e, Q->kind, Q->dev, 0);
+        }
+        device_enable(e, P->kind, P->dev, 1);
         return 0;
     }
     case 0x81: return e->mouse_script ? (s16)(e->mouse_script + IMM_BIAS) : 0;
@@ -789,6 +815,7 @@ static int set_range(Sprite *s, int first, int last, int start)
     s->first = first; s->last = last; s->next = start;
     s->fwd = first <= last;
     s->autocyc = first != last;
+    s->pend = 1;                                     /* 6391: cur changes at the next move, not now */
     return (s->fwd ? last - first : first - last) + 1;
 }
 
@@ -797,9 +824,14 @@ static void step_cel(Sprite *s)
 {
     s->cur = s->next;
     s->ncomp = 0;
+    s->pend = 0;
     if (s->fwd) { if (++s->next > s->last) s->next = s->first; }
     else        { if (--s->next < s->last) s->next = s->first; }
 }
+
+/* FUN_1000_37ca: every change of position first takes a pending cel step
+ * (0x37e6), so SET_RANGE then SET_POS shows the range's first cel at once. */
+static void pend_step(Sprite *s) { if (s->pend) step_cel(s); }
 
 static int due(Engine *e, u32 d) { return (int)(e->now - d) >= 0; }
 static void rearm(Engine *e, Sprite *s, u32 *d, u32 per) { *d = (s->catchup ? *d : e->now) + per; }
@@ -817,6 +849,65 @@ static int t13_len(const u8 *p, size_t left)
     int op = rd16(p);
     if (op == 20) return left >= 4 ? rd16(p + 2) : 0;
     return (op > 0 && op < 23) ? L[op] : 0;
+}
+
+int engine_t13_len(const u8 *p, size_t left) { return t13_len(p, left); }
+
+/* Movies (sprite command 22, JUNGS01 FUN_1000_4d86). A type 8 resource names
+ * one: +6 its frame count, +10 the milliseconds per frame. The frames are a
+ * type 2 resource, each an ordinary bitmap (header and LZW), indexed by a
+ * second type 2 of {u16 kind, u16 size, u32 offset} entries: kind 0 a whole
+ * frame, kind 1 the changes from the one before (0 = unchanged). The original
+ * streams them from the disc and swaps each finished frame in as the sprite's
+ * picture, placed like any cel; the only movie on the disc is the Disney
+ * Interactive logo in JUNGLE.BIN, drawn inside the opening card's banner. */
+static int movie_start(Engine *e, Sprite *s, int ref)
+{
+    if (ref < 0 || ref >= e->c.ndir || e->c.dir[ref].type != 8 || e->c.dir[ref].size < 12) return 0;
+    const u8 *r = resource_bytes(&e->c, &e->c.dir[ref]);
+    int n = rd16(r + 6), ms = rd16(r + 10), index = -1, data = -1;
+    if (n <= 0) return 0;
+    for (int i = 0; i < e->c.ndir; i++) if (e->c.dir[i].type == 2) {
+        if (e->c.dir[i].size == (u32)n * 8) index = i;
+        else if (data < 0 || e->c.dir[i].size > e->c.dir[data].size) data = i;
+    }
+    if (index < 0 || data < 0) return 0;
+    free(s->movie.px);
+    memset(&s->movie, 0, sizeof s->movie);
+    s->movie.on = 1; s->movie.n = n; s->movie.ms = ms ? ms : 100; s->movie.shown = -1;
+    s->movie.index = index; s->movie.data = data; s->movie.t0 = e->now;
+    return 1;
+}
+
+static void movie_frame(Engine *e, Sprite *s, int k)
+{
+    const u8 *ix = resource_bytes(&e->c, &e->c.dir[s->movie.index]) + (size_t)k * 8;
+    int kind = rd16(ix); u32 size = rd16(ix + 2), off = rd32(ix + 4);
+    if (off + size > e->c.dir[s->movie.data].size) return;
+    const u8 *src = resource_bytes(&e->c, &e->c.dir[s->movie.data]) + off;
+    int w, h; u8 *px;
+    if (!bitmap_decode(src, size, &w, &h, &px)) return;
+    if (!s->movie.px || s->movie.w != w || s->movie.h != h) {
+        free(s->movie.px); s->movie.px = calloc((size_t)w * h, 1); s->movie.w = w; s->movie.h = h;
+        if (!s->movie.px) { free(px); return; }
+    }
+    for (int y = 0; y < h; y++) {                    /* bottom-up, as a DIB */
+        const u8 *a = px + (size_t)(h - 1 - y) * w; u8 *b = s->movie.px + (size_t)y * w;
+        if (kind == 0) memcpy(b, a, (size_t)w);
+        else for (int x = 0; x < w; x++) if (a[x]) b[x] = a[x];
+    }
+    free(px);
+    s->movie.ox = (s16)rd16(src + 0x0A) - (w - 1) / 2; s->movie.oy = (s16)rd16(src + 0x0C) - (h - 1) / 2;
+}
+
+/* The frame due now, decoded in turn; done once the last has had its time. */
+static int movie_step(Engine *e, Sprite *s)
+{
+    if (!s->movie.on) return 1;
+    int due = (int)((e->now - s->movie.t0) / (u32)s->movie.ms);
+    while (s->movie.shown < due && s->movie.shown < s->movie.n - 1) movie_frame(e, s, ++s->movie.shown);
+    s->visible = 1;
+    return due >= s->movie.n;
 }
 
 /* One type 13 record: init once when the PC arrives, then exec until done. */
@@ -852,6 +943,7 @@ static int t13_exec(Engine *e, Sprite *s, u8 *r, int len)
             s->comp[k++] = cv;
         }
         s->ncomp = k;
+        s->pend = 0;                                 /* 106e: cleared, not stepped */
         s->visible = 1;
         r[0x0C] = 1;
         return s->fper == 0;
@@ -883,6 +975,7 @@ static int t13_exec(Engine *e, Sprite *s, u8 *r, int len)
         if (!due(e, s->mdue)) return 0;
         rearm(e, s, &s->mdue, s->mper);
         int i = ++*ip, n = *np;
+        pend_step(s);
         if (op == 5) {
             long t = ((long)i * 1024 + n / 2) / n;
             for (int a = 0; a < 2; a++) {
@@ -899,6 +992,7 @@ static int t13_exec(Engine *e, Sprite *s, u8 *r, int len)
         return *ip >= *np;
     }
     case 7:                                          /* FLIP_OFFSET */
+        if (s->flipx != (V(2) != 0) || s->flipy != (V(4) != 0) || V(6) || V(8)) pend_step(s);
         s->flipx = V(2) != 0; s->flipy = V(4) != 0;
         s->x += V(6); s->y += V(8);
         return 1;
@@ -907,12 +1001,14 @@ static int t13_exec(Engine *e, Sprite *s, u8 *r, int len)
         if (init) s->mdue = e->now + s->mper;
         autocycle(e, s);
         if (!due(e, s->mdue)) return 0;
+        pend_step(s);
         if (rd16(r + 2)) { s->x += V(4); s->y += V(6); } else { s->x = V(4); s->y = V(6); }
         return 1;
     case 11:                                         /* WAIT */
         if (init) { s->fdue = e->now + (u16)V(2); }
         return due(e, s->fdue);
     case 12:                                         /* SET_POS */
+        pend_step(s);
         if (r[6]) { s->x += V(2); s->y += V(4); } else { s->x = V(2); s->y = V(4); }
         return 1;
     case 13: s->catchup = r[2]; s->fdue = s->mdue = e->now; return 1;
@@ -941,7 +1037,12 @@ static int t13_exec(Engine *e, Sprite *s, u8 *r, int len)
         call_with(e, rd16(r + 2), n, args);
         return 1;
     }
-    default: return 1;                               /* 3, 4, 18, 19, 22: not needed yet */
+    case 22:                                         /* PLAY_MOVIE, FUN_1000_4d86 */
+        if (init && !movie_start(e, s, (u16)V(2))) return 1;
+        return movie_step(e, s);
+    default:                                         /* 3, 4, 18, 19: not on this disc (--audit) */
+        if (op >= 0 && op < 32) e->unimpl_t13[op]++;
+        return 1;
     }
 #undef V
 }
@@ -964,9 +1065,19 @@ static void t13_advance(Sprite *s, int len)
 }
 
 
+/* S_010 (JUNGS01 1000:4c12): the program is freed and its timing forgotten,
+ * both due times and periods, catch-up and the loop break. The next appended
+ * command then starts a fresh one-record program. */
+static void sprite_stop(Engine *e, Sprite *s)
+{
+    free(s->prog); s->prog = NULL; s->plen = s->pc = 0; s->inited = 0; s->gen++;
+    s->fdue = s->mdue = 0; s->fper = s->mper = 0; s->catchup = 0; s->brk = 0;
+    s->running = 0;
+}
+
 static void program_end(Engine *e, Sprite *s)
 {
-    s->running = 0;                                  /* the PC stays at the end: an appended record resumes it */
+    sprite_stop(e, s);                               /* 45ca: running off the end is S_010 too */
 }
 
 static void sprite_tick(Engine *e, Sprite *s)
@@ -999,10 +1110,22 @@ static void sprite_program_bytes(Engine *e, Sprite *s, const u8 *rec, int len, i
     if (!s->running) { s->running = 1; s->inited = 0; }   /* FUN_1000_45b2 if idle */
 }
 
+/* S_067 for commands 1, 2, 5 and 9 (FUN_1000_5c90): the command becomes the
+ * whole program (5324 resets the buffer, not the timers) and its first step
+ * runs now, inside the builtin (4b16); finished already, the program stops. */
+static void sprite_program_now(Engine *e, Sprite *s, const u8 *rec, int len)
+{
+    free(s->prog); s->prog = malloc((size_t)len);
+    if (!s->prog) { s->plen = s->pc = 0; s->running = 0; return; }
+    memcpy(s->prog, rec, (size_t)len);
+    s->plen = len; s->pc = 0; s->inited = 0; s->brk = 0; s->gen++;
+    s->running = 1;
+    if (t13_exec(e, s, s->prog, len)) sprite_stop(e, s);
+}
+
 static void sprite_program(Engine *e, Sprite *s, int res13)
 {
-    free(s->prog); s->prog = NULL; s->plen = s->pc = s->inited = 0;
-    s->brk = 0; s->gen++;
+    sprite_stop(e, s);                               /* S_039 starts with S_010 (4cc2) */
     if (res_type(e, res13) != 13) return;
     s->plen = (int)e->c.dir[res13].size;
     s->prog = malloc((size_t)s->plen);
@@ -1093,6 +1216,7 @@ static void mix_to(Engine *e, u32 t)
     }
     s16 *out = e->audio + e->naudio;
     memset(out, 0, ns * sizeof(s16));
+    if (e->audio_paused) { e->naudio += ns; return; }   /* held: every voice and the music keep their place */
     for (int k = 0; k < 16; k++) {
         EngVoice *v = &e->voice[k];
         if (!v->pcm) continue;
@@ -1171,7 +1295,7 @@ static int exec_record(Engine *e, const u8 *b, size_t pc, size_t n, int *adv)
         if (e->trace) printf("%*s     sprite %d program %d flag %d\n", e->depth * 2, "", s15, s13, flag);
         if (!s) return 1;
         if (flag) s->visible = 0;
-        if (s13 < 0) { s->running = 0; } else sprite_program(e, s, s13);
+        if (s13 < 0) sprite_stop(e, s); else sprite_program(e, s, s13);   /* a396: no program is S_010 */
         return 1;
     }
     case 6: {                                        /* background, FUN_1008_032c */
@@ -1182,7 +1306,18 @@ static int exec_record(Engine *e, const u8 *b, size_t pc, size_t n, int *adv)
         return 1;
     }
     case 4: {                                        /* hotspot setup, FUN_1008_2dc0 / 27e0 */
-        if (r[0x0E]) return 1;                       /* global enable toggles: not modelled */
+        if (r[0x0E]) {                               /* every hotspot and clickable object at once */
+            if (r[0x0F] || r[0x10]) {                /* FUN_1008_25a8: on (+0x0F) or off (+0x10) */
+                u8 off = r[0x0F] ? 0 : 1;
+                for (int k = 0; k < e->nhot; k++) e->hot[k].off = off;
+                for (int o = 0; o < e->c.ndir; o++) if (e->c.dir[o].type == 15) e->click_off[o] = off;
+            } else {                                 /* FUN_1008_228e: one click script for all, or none */
+                if (!W(4)) e->nhot = 0;
+                else for (int k = 0; k < e->nhot; k++) { e->hot[k].script = (u16)(V(4) - IMM_BIAS); e->hot[k].off = 0; }
+                for (int o = 0; o < e->c.ndir; o++) if (e->c.dir[o].type == 15) e->click[o] = W(4);
+            }
+            return 1;
+        }
         if (W(2)) {
             int o = as_index(V(2));
             if (o < 0 || o >= e->c.ndir) return 1;
@@ -1233,10 +1368,12 @@ static int exec_record(Engine *e, const u8 *b, size_t pc, size_t n, int *adv)
     }
     case 8: {                                        /* play a clip, FUN_1008_88b2 -> JUNGA01 A_029 */
         int si = as_index(V(2));
-        u16 done = r[7] ? W(0x1A) : 0;               /* the record from +4 goes to JUNGA01; +3 there is */
+        s16 dv = V(0x1A);                            /* 88d4..8916: decoded now, in this frame; 0 = none */
+        u16 done = r[7] && dv ? (u16)(dv - IMM_BIAS) : 0;   /* the record from +4 goes to JUNGA01; +3 there is */
+        u16 tag = (u16)(si - IMM_BIAS);              /* JUNGA01 posts the clip's own handle (header +0xa) */
         const s16 *pcm = NULL; u32 n = 0;            /* "notify", +0x16 there the completion script */
         if (!clip(e, si, &pcm, &n)) {                /* FUN_1008_88b2: cannot play, complete now */
-            if (done && e->nsnd < 16) { e->snd[e->nsnd].script = done; e->snd[e->nsnd].tag = W(2); e->snd[e->nsnd].due = e->now; e->nsnd++; }
+            if (done && e->nsnd < 16) { e->snd[e->nsnd].script = done; e->snd[e->nsnd].tag = tag; e->snd[e->nsnd].due = e->now; e->nsnd++; }
             return 1;
         }
         int k, free_k = -1;
@@ -1244,7 +1381,7 @@ static int exec_record(Engine *e, const u8 *b, size_t pc, size_t n, int *adv)
         if (k == 16) k = free_k;
         if (k < 0) return 1;
         e->voice[k].pcm = pcm; e->voice[k].n = n; e->voice[k].pos = 0; e->voice[k].res = si;
-        e->voice[k].loop = (s16)W(4) == -1; e->voice[k].done = done; e->voice[k].tag = W(2);
+        e->voice[k].loop = (s16)W(4) == -1; e->voice[k].done = done; e->voice[k].tag = tag;
         {   /* ENGINE_AVLOG: where each clip starts in the mix, for sync checks */
             static int avlog = -1; if (avlog < 0) avlog = getenv("ENGINE_AVLOG") != NULL;
             if (avlog) printf("av: clip %d at %u ms sample %llu\n", si, e->now, e->audio_samples);
@@ -1264,7 +1401,7 @@ static int exec_record(Engine *e, const u8 *b, size_t pc, size_t n, int *adv)
         if (len + 4 > e->c.dir[ri].size) len = e->c.dir[ri].size - 4;
         e->mus.ev = b + 4; e->mus.n = len / 4; e->mus.idx = 0; e->mus.wait = 0;
         e->mus.loops = (s16)W(4);                    /* 0 once, N extra passes, 0xFFFF for ever */
-        e->mus.notify = r[6] ? (u16)V(8) : 0;        /* nonzero: a script, queued like op 8 completions */
+        e->mus.notify = r[6] && V(8) ? (u16)(V(8) - IMM_BIAS) : 0;   /* 9561..95a2: decoded now, re-encoded; queued like op 8's */
         e->mus.tag = rd16(b + 2);                    /* header id, the message's wParam */
         e->mus.on = 1;
         if (e->trace) fprintf(stderr, "music: track %d, %u events, loops %d, notify %u\n", ri, e->mus.n, e->mus.loops, e->mus.notify);
@@ -1391,7 +1528,7 @@ static int exec_record(Engine *e, const u8 *b, size_t pc, size_t n, int *adv)
         Sprite *sp = sprite_find(e, as_index(V(2)));
         if (!sp) return 1;
         int dx = V(4), dy = V(6);
-        sp->x += dx; sp->y += dy;
+        pend_step(sp); sp->x += dx; sp->y += dy;
         if (sp->prog && sp->inited && sp->pc + 2 <= sp->plen) {   /* shift an op 5 / op 9 in flight */
             u8 *pr = sp->prog + sp->pc; int pop = rd16(pr);
             if (pop == 5 || pop == 9) {
@@ -1404,7 +1541,7 @@ static int exec_record(Engine *e, const u8 *b, size_t pc, size_t n, int *adv)
     }
     case 63: {                                       /* S_038: set a sprite's position */
         Sprite *sp = sprite_find(e, as_index(V(2)));
-        if (sp) { sp->x = V(4); sp->y = V(6); }
+        if (sp) { pend_step(sp); sp->x = V(4); sp->y = V(6); }
         return 1;
     }
     case 17: {                                       /* conditional call, FUN_1008_919c / 8646 */
@@ -1460,7 +1597,7 @@ static int exec_record(Engine *e, const u8 *b, size_t pc, size_t n, int *adv)
         Sprite *ns = old;
         if (nw != o) {
             int x = old->x, y = old->y, fx = old->flipx, fy = old->flipy;
-            old->running = 0; old->visible = 0;      /* S_010 + S_006 */
+            sprite_stop(e, old); old->visible = 0;   /* S_010 + S_006 */
             ns = sprite_load(e, nw);
             if (!ns) return 1;
             ns->x = x; ns->y = y; ns->flipx = fx; ns->flipy = fy;
@@ -1468,7 +1605,7 @@ static int exec_record(Engine *e, const u8 *b, size_t pc, size_t n, int *adv)
         }
         int s13 = W(6) ? as_index(V(6)) : -1;        /* then place it as op 5 would */
         if (r[11]) ns->visible = 0;
-        if (s13 < 0) ns->running = 0; else sprite_program(e, ns, s13);
+        if (s13 < 0) sprite_stop(e, ns); else sprite_program(e, ns, s13);
         if (e->trace) printf("%*s     swap sprite %d -> %d program %d\n", e->depth * 2, "", o, nw, s13);
         if (W(8)) return run_script(e, W(8));
         return 1;
@@ -1481,7 +1618,7 @@ static int exec_record(Engine *e, const u8 *b, size_t pc, size_t n, int *adv)
     case 30:                                         /* queue a call, FUN_1008_ea92 */
         enqueue(e, (u16)(V(2) - IMM_BIAS), (u16)(V(4) - IMM_BIAS), (u16)(V(6) - IMM_BIAS));
         return 1;
-    case 35: return 1;                               /* DAT_1020_14e8: pause handler, not modelled */
+    case 35: e->pause_script = W(2) ? (u16)(V(2) - IMM_BIAS) : 0; return 1;   /* DAT_1020_14e8: the pause handler */
     case 47: wrw(e, addr_of(e, W(2)), (s16)(e->keydown[W(4) & 0xFF] != 0)); return 1;   /* FUN_1008_934a */
     case 40: {                                       /* sprite position into two variables, S_054 */
         Sprite *sp = sprite_find(e, as_index(V(2)));
@@ -1581,12 +1718,19 @@ static int exec_record(Engine *e, const u8 *b, size_t pc, size_t n, int *adv)
         return 1;
     }
     case 83: {                                       /* bind a device to a player, FUN_1008_454c */
-        int pl = V(2) & 3, dev = V(4), kind = r[6];
-        if (e->trace) printf("%*s     op83 player %d dev %d kind %d flags %d %d\n", e->depth * 2, "", pl, dev, kind, r[7], r[8]);
-        if (r[7] || r[8]) return 1;                  /* enable/disable of an existing binding */
-        if (kind == 2) { keyboard_enable(e, 1, dev); e->devplayer[(dev + 1) & 7] = (u8)pl; }
-        else if (kind == 1) e->devplayer[(dev + 3) & 7] = (u8)pl;   /* joystick: none here */
-        else if (kind == 5) e->devplayer[5] = (u8)pl;              /* mouse as joystick */
+        int pl = V(2) & 3; EngPlayer *P = &e->player[pl];
+        if (e->trace) printf("%*s     op83 player %d dev %d kind %d flags %d %d\n", e->depth * 2, "", pl, V(4), r[6], r[7], r[8]);
+        if (P->dev && e->devplayer[P->dev & 7] == pl) device_enable(e, P->kind, P->dev, r[7]);   /* its old device: on (+7) or off */
+        if (r[8]) player_release(e, pl);
+        if (r[7] || r[8]) { input_flags(e); return 1; }
+        int kind = r[6];
+        if (kind == 1) P->dev = (u8)(V(4) + 3);      /* a joystick: none here */
+        else if (kind == 2) { P->dev = (u8)(V(4) + 1); keyboard_enable(e, 1, V(4)); }
+        else if (kind == 5) { P->dev = 5; device_enable(e, 5, 5, 1); }
+        P->kind = (u8)kind;
+        if (kind) e->devplayer[P->dev & 7] = (u8)V(2);
+        else if (e->devplayer[P->dev & 7] == pl && P->dev == 5) e->mousejoy = 0;
+        input_flags(e);
         return 1;
     }
     case 84: {                                       /* a player's input script, FUN_1008_47f6 */
@@ -1620,6 +1764,11 @@ static int exec_record(Engine *e, const u8 *b, size_t pc, size_t n, int *adv)
         return 1;
     }
     case 18: {                                       /* scene transition, FUN_1008_8c00 */
+        if (r[0x11]) {                               /* back to the scene we came from; none: quit */
+            if (!e->prev[0] || !strcmp(e->prev, e->name)) { e->quit = 1; return 0; }
+            snprintf(e->pending, sizeof e->pending, "%s", e->prev);
+            return 1;
+        }
         int k;
         for (k = 0; k < 14 && r[2 + k]; k++) e->pending[k] = (char)r[2 + k];
         e->pending[k] = 0;
@@ -1704,28 +1853,61 @@ static void keyboard_enable(Engine *e, int on, int kbd)
     }
 }
 
+/* A player's device on or off, FUN_1008_454c's first switch: 1 a joystick
+ * (FUN_1008_3d06; the port has none, a pad reaches the games as keys), 2 a
+ * keyboard layout (FUN_1008_4fde), 5 the mouse as a joystick (FUN_1008_73fe). */
+static void device_enable(Engine *e, int kind, int dev, int on)
+{
+    if (kind == 2) keyboard_enable(e, on, dev - 1);
+    else if (kind == 5) {                            /* FUN_1008_73fe: a dead zone of 20 around the centre, a box of 40 */
+        e->mousejoy = (u8)(on != 0); e->mj_last = 0;
+        if (on) { wrw(e, 0x3C38, 0); wrw(e, 0x3C3A, 0); e->warp.x = ORG_X; e->warp.y = ORG_Y; e->warp.host = 1; }
+    }
+}
+
+/* FUN_1008_3e42: let go of everything the player holds, as release events. */
+static void player_release(Engine *e, int pl)
+{
+    EngPlayer *P = &e->player[pl & 3];
+    if (!P->script) return;
+    if (P->buttons & 1) enqueue(e, P->script, (u16)(pl - IMM_BIAS), (u16)(0xFE - IMM_BIAS));
+    if (P->buttons & 2) enqueue(e, P->script, (u16)(pl - IMM_BIAS), (u16)(0xFD - IMM_BIAS));
+    if (P->code) enqueue(e, P->script, (u16)(pl - IMM_BIAS), (u16)(0 - IMM_BIAS));
+}
+
+static void input_flags(Engine *e)                   /* FUN_1008_454c's tail: which kinds are in use */
+{
+    e->kbd_input = e->player[0].kind == 2 || e->player[1].kind == 2;
+    e->joy_input = e->player[0].kind == 1 || e->player[1].kind == 1;
+}
+
 static int is_dir(u8 c) { return c == 0x10 || c == 0x20 || c == 0x40 || c == 0x80; }
 
-static void game_key(Engine *e, int vk, int down)
+/* Returns 1 when the key went to a player (FUN_1008_4e6e returns 0 then, and
+ * FUN_1008_2f72 stops there: a player's key fires no binding as well). */
+static int game_key(Engine *e, int vk, int down)
 {
     EngKey *K = &e->keymap[vk & 0xFF];
-    if (!K->code) return;
+    if (!K->code) return 0;
     int kbd = K->kbd & 1;
     if (down) {                                      /* FUN_1008_4e6e */
-        if (!K->armed) return;
+        if (e->paused || !K->armed) return 0;
         K->armed = 0;
         u8 c = K->code;
-        if (is_dir(c)) { e->dirmask[kbd] |= c >> 4; c = DIRTAB[e->dirmask[kbd] & 15]; if (c == 0x88) return; }
+        if (is_dir(c)) { e->dirmask[kbd] |= c >> 4; c = DIRTAB[e->dirmask[kbd] & 15]; if (c == 0x88) return 1; }
         input_event(e, c, kbd + 1);
+        return 1;
     } else {                                         /* FUN_1008_4efc */
+        if (e->paused) return 0;
         K->armed = 1;
         u8 c = K->code;
         if (is_dir(c)) {
             e->dirmask[kbd] &= (u8)~(c >> 4);
             c = DIRTAB[e->dirmask[kbd] & 15];        /* the original re-sends after 200 ms */
-            if (c == 0x88) return;
+            if (c == 0x88) return 1;
         } else c = (u8)~c;
         input_event(e, c, kbd + 1);
+        return 1;
     }
 }
 
@@ -1837,6 +2019,31 @@ static int sprite_opaque_at(Engine *e, Sprite *s, int x, int y)
     return cel_hit(e, s, s->cur, x, y);
 }
 
+void engine_host_hide(Engine *e, int res, int hidden)
+{
+    Sprite *s = sprite_find(e, res);
+    if (s) s->host_hidden = (u8)(hidden != 0);
+}
+
+int engine_sprite_show(Engine *e, int res, int on)
+{
+    Sprite *s = sprite_find(e, res);
+    if (!s) return 0;
+    s->visible = (u8)(on != 0);
+    return 1;
+}
+
+int engine_sprite_shown(Engine *e, int res) { Sprite *s = sprite_find(e, res); return s && s->visible; }
+
+/* For hosts: is canvas pixel (x, y) solid in sprite res's current cels, shown
+ * or not? Screen coordinates, 0..ENG_W-1 / 0..ENG_H-1. Rendering only: the
+ * remastered 3D table raises what the table's masks mark as solid. */
+int engine_sprite_hit(Engine *e, int res, int x, int y)
+{
+    Sprite *s = sprite_find(e, res);
+    return s ? sprite_opaque_at(e, s, x - ORG_X, y - ORG_Y) : 0;
+}
+
 static int sprites_collide(Engine *e, Sprite *A, Sprite *B, int samez, int hid_a, int hid_b)
 {
     if (samez && A->z != B->z) return 0;
@@ -1869,12 +2076,45 @@ static Sprite *sprite_at(Engine *e, int x, int y)
     return best;
 }
 
+/* The mouse as a player's joystick, FUN_1008_72e4: the buttons are buttons 1
+ * and 2; the pointer's angle from the centre, past a dead zone of 20, is one
+ * of four directions (JUNGU01 GETANGLE, GETQUADRANT of angle + 45 degrees,
+ * the table at DS:0x78), and the pointer is kept inside a box of 40. It takes
+ * the mouse from everything else while it is on. */
+static void mouse_joystick(Engine *e, int x, int y, int button, int down)
+{
+    if (e->paused) return;
+    u8 code;
+    if (button) code = button == 1 ? (down ? 1 : 0xFE) : (down ? 2 : 0xFD);
+    else {
+        wrw(e, 0x3C38, (s16)x); wrw(e, 0x3C3A, (s16)y);
+        if (x >= -20 && x < 20 && y >= -20 && y < 20) code = 0;   /* PtInRect of InflateRect(20, 20) */
+        else {
+            double r = atan2((double)x, (double)y) * 572.9746936176986;
+            int ang = (int)r; if (ang < 0) ang += 3600;
+            if (!(x >= -40 && x < 40 && y >= -40 && y < 40)) {   /* outside the box: back onto its edge */
+                int rx, ry; ray_to_box(40 - 2, 40 - 2, -40 + 2, -40 + 2, 0, 0, ang, &rx, &ry);
+                wrw(e, 0x3C38, (s16)rx); wrw(e, 0x3C3A, (s16)ry);
+                e->warp.x = ORG_X + rx; e->warp.y = ORG_Y + ry; e->warp.host = 1;
+            }
+            static const u8 quad[4] = { 5, 7, 3, 6 };   /* down, right, up, left */
+            int q = (ang + 450) % 3600;
+            code = quad[q < 900 ? 0 : q < 1800 ? 1 : q < 2700 ? 2 : 3];
+        }
+        if (code == e->mj_last) return;
+        e->mj_last = code;
+    }
+    input_event(e, code, 5);
+}
+
 void engine_mouse(Engine *e, int x, int y, int button, int down)
 {
     if (button) e->mheld = down ? (u8)(e->mheld | (1 << button)) : (u8)(e->mheld & ~(1 << button));
     if (e->fade.dir) return;                         /* input waits out a fade */
     x -= ORG_X; y -= ORG_Y;                                     /* FUN_1008_26e2: client -> logical */
+    if (e->mousejoy) { mouse_joystick(e, x, y, button, down); return; }
     wrw(e, 0x3C38, (s16)x); wrw(e, 0x3C3A, (s16)y);           /* globals 5005/5006 */
+    if (e->paused) return;                                      /* 30ff / 2b55 / 2d71: DAT_5a5d holds the mouse */
     if (!button) {                                              /* FUN_1008_30ae */
         if (!mouse_filter(e, 4)) return;
         if (e->pressed) {                                       /* drag the held object */
@@ -1922,6 +2162,7 @@ void engine_mouse(Engine *e, int x, int y, int button, int down)
             if (rec[0x11]) { script = rd16(rec + 6); e->pressed = s->res; e->drag_x = x; e->drag_y = y; }
             else if (!e->click_off[s->res]) script = e->click[s->res];
         }
+        if (!script) tag = 0;                                   /* 2c7e: a hotspot gets no sprite */
         if (!script)
             for (int k = e->nhot - 1; k >= 0 && !script; k--)
                 if (!e->hot[k].off && x >= e->hot[k].l && x < e->hot[k].r && y >= e->hot[k].t && y < e->hot[k].b)
@@ -1935,7 +2176,7 @@ void engine_mouse(Engine *e, int x, int y, int button, int down)
             const u8 *rec = resource_bytes(&e->c, &e->c.dir[e->pressed]);
             enqueue(e, rd16(rec + 8), (u16)(e->pressed - IMM_BIAS), 0);
         }
-        e->pressed = 0;
+        if (pass) e->pressed = 0;                    /* 2d9e: a vetoed release keeps the drag */
     }
 }
 
@@ -2000,7 +2241,7 @@ int engine_init(Engine *e, const char *dir)
 
 static void unload(Engine *e)
 {
-    for (int i = 0; i < ENG_MAX_SPRITES; i++) { free(e->spr[i].prog); }
+    for (int i = 0; i < ENG_MAX_SPRITES; i++) { free(e->spr[i].prog); free(e->spr[i].movie.px); }
     memset(e->spr, 0, sizeof e->spr);
     for (int i = 0; i < g_nbm; i++) free(g_bm[i].px);
     for (int i = 0; i < g_nbm && g_snd; i++) free(g_snd[i].pcm);
@@ -2016,6 +2257,7 @@ static void unload(Engine *e)
     e->nbind = 0; e->bg = -1; e->bgfill = 0; memset(e->keys, 0, sizeof e->keys);
     e->post_script = e->focus_script = 0;
     free(e->click); free(e->click_off); e->click = NULL; e->click_off = NULL;
+    e->pause_script = 0; e->paused = 0;
     e->nhot = 0; e->mouse_script = 0; e->pressed = 0; e->hover_script = 0; e->hovered = 0; e->key_filter = 0; e->nreg = 0; e->inreg = 0; e->nq = 0; e->ntm = 0; e->nsnd = 0; e->ncol = 0;
     memset(e->keymap, 0, sizeof e->keymap); memset(e->player, 0, sizeof e->player); memset(e->devplayer, 0, sizeof e->devplayer);
 }
@@ -2036,28 +2278,12 @@ static u16 *saved_image(Engine *e, const char *name, int create)
     return e->saved[e->nsaved++].img;
 }
 
-/* Corrections to the disc's own data, applied to a container's initial globals.
- * Each is a defect in the 1995 data, not in the engine; JUNGLE_ORIGINAL=1 keeps
- * the disc exactly as it is. See docs/FIDELITY.md, "Table fixes". */
-static void table_fixes(Engine *e)
-{
-    if (getenv("JUNGLE_ORIGINAL")) return;
-    s16 *g = (s16 *)e->mem + (VAR_BASE >> 1);
-    if (!strcmp(e->name, "JUNGPINB.BIN") && g[2496] == 146 && g[2501] == -193) {
-        /* Pinball, the rightmost GRUB lane post: its collision segment starts at the
-         * stake's top-left corner, outside the stake's pixel mask, where the other four
-         * start inside theirs. A ball dropping onto the stake's top-right shoulder is
-         * then stopped by the mask but judged by the segment to be moving away, so it
-         * neither moves nor bounces, for good. Start the segment inside the stake. */
-        g[2496] = 154; g[2501] = -185;
-    }
-}
-
 int engine_load(Engine *e, const char *name)
 {
     char path[512], up[16]; int k;
     for (k = 0; k < 15 && name[k]; k++) up[k] = (char)(name[k] >= 'a' && name[k] <= 'z' ? name[k] - 32 : name[k]);
     up[k] = 0;
+    if (e->open) snprintf(e->prev, sizeof e->prev, "%s", e->name);   /* FUN_1008_beca: 150e = 150c */
     if (e->open) {                                    /* save the outgoing scene's globals */
         u16 *img = saved_image(e, e->name, 1);
         if (img) memcpy(img, e->mem + (VAR_BASE >> 1), IMG_WORDS * sizeof(u16));
@@ -2085,7 +2311,6 @@ int engine_load(Engine *e, const char *name)
             u16 gi = rd16(e->c.data + voff + i), gv = rd16(e->c.data + voff + i + 2);
             if (gi < IMG_WORDS) e->mem[(VAR_BASE >> 1) + gi] = gv;
         }
-        table_fixes(e);
     }
     g_nbm = e->c.ndir;
     g_bm = calloc((size_t)g_nbm, sizeof *g_bm);
@@ -2115,12 +2340,12 @@ int engine_load(Engine *e, const char *name)
  * side and then the other: a ball at rest under gravity is always held from
  * below, so up is the way out of any wedge, and the table's gravity brings it
  * back down clear of it. The balls: x g1900.., y g1903.., speed g1894.., heading g1897..,
- * 1 in play g1917... JUNGLE_ORIGINAL=1 turns this off with the table fixes. */
+ * 1 in play g1917... JUNGLE_ORIGINAL=1 turns this off. */
 static void pinball_unstick(Engine *e)
 {
     static int original = -1;
     if (original < 0) original = getenv("JUNGLE_ORIGINAL") != NULL;
-    if (original || e->timers_paused || strcmp(e->name, "JUNGPINB.BIN")) return;
+    if (original || e->timers_paused || e->paused || strcmp(e->name, "JUNGPINB.BIN")) return;
     s16 *g = (s16 *)e->mem + (VAR_BASE >> 1);
     int holding = e->keydown['Z'] || e->keydown[0xBF] || e->keydown[0x26] || e->mheld;
     for (int i = 0; i < 3; i++) {
@@ -2162,6 +2387,7 @@ void engine_tick(Engine *e, u32 now)
         u16 s = e->post_script; e->post_script = 0;
         run_script(e, s);
     }
+    if (e->paused) return;                            /* seg2:3e, DAT_5a5d: no idle pass while paused */
     for (int k = 0; k < e->ntm && !e->pending[0] && !e->timers_paused; k++) {   /* FUN_1008_df36 */
         if ((int)(now - e->tm[k].due) < 0) continue;
         u16 sc = e->tm[k].script;
@@ -2196,9 +2422,10 @@ void engine_tick(Engine *e, u32 now)
 void engine_keystate(Engine *e, int vk, int down)
 {
     e->keydown[vk & 0xFF] = (u8)(down != 0);
-    if (down) return;
-    game_key(e, vk, 0);
-    if (vk < 256 && !e->keys[vk].off && e->keys[vk].up) run_script(e, e->keys[vk].up);   /* WM_KEYUP */
+    if (down) return;                                /* WM_KEYUP, FUN_1008_304e: */
+    if (e->kbd_input && game_key(e, vk, 0)) return;  /* a player's key goes to the player alone (DAT_5a53) */
+    if (e->paused) return;
+    if (vk < 256 && e->keys[vk].up) run_script(e, e->keys[vk].up);   /* the up binding; +0x0E off is not read */
 }
 
 /* Text entry, FUN_1008_da12 / da98 / dc3c: the field edits its type 16
@@ -2256,19 +2483,26 @@ int engine_edit_len(Engine *e)
     return n ? (int)n - 1 : 0;
 }
 
-void engine_key(Engine *e, int vk)
+void engine_key(Engine *e, int vk)                 /* FUN_1008_2f72, in its order */
 {
     if (e->fade.dir) return;                         /* input waits out a fade */
     e->keydown[vk & 0xFF] = 1;
-    game_key(e, vk, 1);
+    if (game_key(e, vk, 1)) return;                  /* a player's key goes to the player alone (DAT_5a53 gates it: */
+                                                     /* with no keyboard bound, no key is armed, so no call is needed) */
+    if (vk == 0x13) {                                /* VK_PAUSE, FUN_1008_2776: the scene's handler shows or hides its sign */
+        if (e->pause_script) { u16 arg = (u16)((e->paused ? 0 : 1) - IMM_BIAS); call_with(e, e->pause_script, 1, &arg); }
+        else e->audio_paused = !e->paused;           /* no handler: JUNGA01 ordinal 25, the sound held */
+        e->paused = !e->paused;
+    }
+    if (e->paused) return;                           /* paused: every other key waits */
     if (e->key_filter) {                                        /* FUN_1008_2696 */
         u16 arg = (u16)(vk - IMM_BIAS);
         if (!call_with(e, e->key_filter, 1, &arg)) return;
     }
     if (e->edit.on) return;                          /* bindings wait while a field takes text */
-    if (vk < 0 || vk > 255 || e->keys[vk].off) return;     /* FUN_1008_2f72 */
-    u16 sc = e->keydown[0x11] && e->keys[vk].ctrl ? e->keys[vk].ctrl
-           : e->keydown[0x10] && e->keys[vk].shift ? e->keys[vk].shift : e->keys[vk].down;
+    if (vk < 0 || vk > 255 || e->keys[vk].off) return;
+    /* Shift first, then Ctrl: with Shift held only the Shift binding runs, if any */
+    u16 sc = e->keydown[0x10] ? e->keys[vk].shift : e->keydown[0x11] ? e->keys[vk].ctrl : e->keys[vk].down;
     if (sc) run_script(e, sc);
 }
 
@@ -2334,7 +2568,29 @@ void engine_render(Engine *e, u8 *fb)
     engine_render_scene(e, fb);
 }
 
-static void engine_render_scene(Engine *e, u8 *fb)
+static void engine_render_scene(Engine *e, u8 *fb);
+
+/* JUNGS01 ordinal 77: ScrollDC by (dx, dy), then by (-2dx, -2dy), then back:
+ * the whole picture knocked one way and the other for an instant (Pinball's
+ * shake, Bug Drop's thuds). Two 40 ms steps here, the edges left as they were. */
+static void jolt(Engine *e, u8 *fb)
+{
+    if (!e->jolt.t0) return;
+    u32 t = e->now - e->jolt.t0;
+    if (t >= 80) { e->jolt.t0 = 0; return; }
+    int dx = t < 40 ? e->jolt.dx : -e->jolt.dx, dy = t < 40 ? e->jolt.dy : -e->jolt.dy;
+    static u8 tmp[ENG_W * ENG_H];
+    memcpy(tmp, fb, sizeof tmp);
+    for (int y = 0; y < ENG_H; y++) {
+        int sy = y - dy; if (sy < 0 || sy >= ENG_H) continue;
+        for (int x = 0; x < ENG_W; x++) { int sx = x - dx; if (sx >= 0 && sx < ENG_W) fb[y * ENG_W + x] = tmp[sy * ENG_W + sx]; }
+    }
+}
+
+static void engine_render_scene_(Engine *e, u8 *fb);
+static void engine_render_scene(Engine *e, u8 *fb) { engine_render_scene_(e, fb); jolt(e, fb); }
+
+static void engine_render_scene_(Engine *e, u8 *fb)
 {
     memset(fb, e->bgfill < 0 ? 0 : e->bgfill, (size_t)ENG_W * ENG_H);
     int w, h; const u8 *px = bitmap(e, e->bg, &w, &h);
@@ -2342,13 +2598,18 @@ static void engine_render_scene(Engine *e, u8 *fb)
     int order[ENG_MAX_SPRITES], n = 0;
     if (getenv("ENGINE_BGONLY")) return;
     int skip = getenv("ENGINE_SKIP") ? atoi(getenv("ENGINE_SKIP")) : -1;
-    for (int i = 0; i < ENG_MAX_SPRITES; i++) if (e->spr[i].used && e->spr[i].visible && e->spr[i].res != skip) order[n++] = i;
+    for (int i = 0; i < ENG_MAX_SPRITES; i++) if (e->spr[i].used && e->spr[i].visible && !e->spr[i].host_hidden && e->spr[i].res != skip) order[n++] = i;
     for (int i = 1; i < n; i++)                        /* stable insertion sort by z */
         for (int j = i; j > 0 && e->spr[order[j - 1]].z > e->spr[order[j]].z; j--) {
             int t = order[j]; order[j] = order[j - 1]; order[j - 1] = t;
         }
     for (int i = 0; i < n; i++) {
         Sprite *s = &e->spr[order[i]];
+        if (s->movie.px) {                           /* a movie's frame is the sprite's picture */
+            blit8(fb, ENG_W, ENG_W, ENG_H, ORG_X + s->x + s->movie.ox, ORG_Y + s->y + s->movie.oy,
+                  s->movie.px, s->movie.w, s->movie.w, s->movie.h, 0);
+            continue;
+        }
         if (s->ncomp) for (int k = 0; k < s->ncomp; k++) draw_cel(e, fb, s, s->comp[k]);
         else draw_cel(e, fb, s, s->cur);
     }
@@ -2386,7 +2647,9 @@ int engine_drawlist(Engine *e, EngDraw *out, int max)
 {
     int n = 0;
     fade_update(e);
-    if (e->fade.dir < 0 && e->fade.snap) {          /* fading out: the frozen 8-bit frame */
+    int movie = 0;                                   /* a movie is not in the art cache: the 8-bit frame */
+    for (int i = 0; i < ENG_MAX_SPRITES; i++) if (e->spr[i].used && e->spr[i].visible && e->spr[i].movie.px) movie = 1;
+    if ((e->fade.dir < 0 && e->fade.snap) || movie) {   /* or fading out: the frozen 8-bit frame */
         if (max > 0) { memset(out, 0, sizeof *out); out->kind = 3; n = 1; }
         return n;
     }
@@ -2394,7 +2657,7 @@ int engine_drawlist(Engine *e, EngDraw *out, int max)
     int w, h; const u8 *px = bitmap(e, e->bg, &w, &h);
     if (px && n < max) { memset(&out[n], 0, sizeof *out); out[n].kind = 1; out[n].res = e->bg; out[n].px = px; out[n].w = w; out[n].h = h; n++; }
     int order[ENG_MAX_SPRITES], ns = 0;
-    for (int i = 0; i < ENG_MAX_SPRITES; i++) if (e->spr[i].used && e->spr[i].visible) order[ns++] = i;
+    for (int i = 0; i < ENG_MAX_SPRITES; i++) if (e->spr[i].used && e->spr[i].visible && !e->spr[i].host_hidden) order[ns++] = i;
     for (int i = 1; i < ns; i++)
         for (int j = i; j > 0 && e->spr[order[j - 1]].z > e->spr[order[j]].z; j--) {
             int t = order[j]; order[j] = order[j - 1]; order[j - 1] = t;

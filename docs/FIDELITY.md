@@ -121,39 +121,22 @@ art judgement and should be opt-in.
 - Do not smooth or interpolate animation the engine steps discretely.
 - Keep every change behind a flag so original behaviour stays reachable for parity testing.
 
-## Table fixes (deliberate deviations)
+## Pinball's stuck ball (a port bug, now fixed)
 
-Everywhere else the port follows the original instruction for instruction. Pinball is the one
-place it knowingly plays differently, because the original physics can hold a ball still for good.
-`JUNGLE_ORIGINAL=1` turns both changes off.
+Balls used to wedge on the GRUB lane stakes and bounce forever in the mouth of the B lane. The
+cause was the port, not the table: the movement script (721) sets the ball's cel from its height
+every tick (`sprite command 15` with the range `(y + 239) / 60`, then `12` to move it), so the ball
+is drawn smaller as it rolls up the table, and its pixel-overlap tests with the stakes and bumpers
+use that cel. JUNGS01 takes a set range's first cel at the ball's next move (`FUN_1000_6364` sets
+`+0x51`, `FUN_1000_37ca` steps it); the port never took it for a one-cel range, so the ball kept
+its launch-size cel (38×39) over the whole table and could not fit the 25-pixel B lane. With the
+cel step ported, bot games show no stuck ball at all (0 in 30, with and without the watchdog below).
 
-**How a ball gets stuck.** Each tick the movement script (721) aims the ball one step along its
-heading and a mask script (1691 at the top of the table, 1692 at the bottom) halves the step back
-until the point is off the table's pixel masks. It never deflects. Bouncing is left to the
-collision scripts, which model posts and guides as line segments and bounce only a ball moving
-*into* a line. Where a mask and its line disagree, the mask stops the ball while the line says it
-is moving away. The ball then gets no move and no bounce, gravity keeps adding speed that goes
-nowhere, and it stays put until the table is shaken.
-
-Every routine on that path was checked against the original machine code: the expression VM
-(all operators, truncating division), the trig tables and helpers, `GETANGLE` and its degrees
-constant, `COLLIDE`, ray-to-box (op 50), the long-arithmetic builtins, sprite placement
-(JUNGS01 `FUN_1000_0b30`) and the point-on-sprite test (JUNGS01 ordinal 81 and its pixel reader
-`FUN_1000_304e`). All of them match.
-
-1. **The rightmost GRUB lane post** (`table_fixes`). Its segment's top end (globals 2496 and 2501)
-   is the stake's top-left corner, (146, −193). That is outside the stake's mask, while the other
-   four posts' segments start inside theirs. A ball dropping onto the stake's top-right shoulder
-   rests at (159, −191), inside the top-cap test (`y <= top + 2`) by one pixel, and is judged to be
-   moving away from the cap. With the ball bot, that happened in about a fifth of games, after an
-   ordinary 1–2.5 s launch. Moving the top end to (154, −185), inside the stake like the others,
-   removes it (0 in 72 games).
-2. **Any other wedge** (`pinball_unstick`). A ball in play that stays perfectly still for 2 s, not
-   in the plunger lane and with no flipper held (cradling stays possible), is sent gently upward,
-   30–60° off vertical, alternating sides. A ball at rest under gravity is always held from below,
-   so up is the way out, and the table's own gravity brings it back down. In testing this fired
-   about once in six games, always in the right inlane corner above the flipper pivot, and freed
-   the ball within two pushes.
+An earlier workaround moved the rightmost stake's collision segment, taking the wedge for a defect
+in the disc's data. It is gone. What remains is one deliberate deviation, `pinball_unstick`, kept
+as a safety net that no longer fires in testing: a ball in play that stays perfectly still for 2 s,
+not in the plunger lane and with no flipper held (cradling stays possible), is sent gently upward,
+30–60° off vertical, alternating sides. `JUNGLE_ORIGINAL=1` turns it off.
 
 The point-on-sprite test also reads RLE bitmaps the way `FUN_1000_304e` does. It walks the
 compressed row with no end-of-row check, so a point past a row's last encoded pixel reads on into
@@ -170,3 +153,43 @@ are the only pairs registered in a bot run of every game whose two flags differ:
 hidden until its letter is lit and is the one marked to count while hidden. With the flags
 crossed, a ball rolled through G, R, U and B without lighting them, so the GRUB bonus could never
 be earned.
+
+Found by the same field-by-field audit against the original machine code:
+
+| What | Original | What the port did |
+|---|---|---|
+| Builtin 0x6C (S_072) | `(sprite, on)`, EXE seg2:11ee; JUNGS01 `60f0` no-ops an unchanged state and moves the frame timer on by the time held | Read `(on, sprite)`: Pause froze nothing, and Pinball's progression bonus (1498) froze the whole table |
+| Op 18 "back" (+0x11) | `8c00`: the scene we came from (DS:0x150e, set on leaving), or WM_CLOSE from the first scene | Copied an empty name: Esc and OK in Options did nothing |
+| Op 8 completion | `88d4`: the done script is decoded when the clip starts, 0 = none; the tag is the clip's handle | Decoded at completion in whatever frame was live; `script 33(clip, 0)` then ran script 0, re-initialising Pinball mid-game (dead balls, games that never ended) |
+| Op 80 completion | `9561`: decoded, then re-encoded | Stored decoded and decoded again |
+| Pause | seg2 main loop skips the whole idle pass while DAT_5a5d is set; the mouse paths and key-up test it too | Timers, collisions, the queue and animation all ran behind the PAUSE sign |
+| Stopping a program (S_010) | `4c12` frees it and zeroes both timers, both periods, catch-up and the loop break; S_039 and op 5 with no program call it | Kept the buffer and PC, so commands appended later ran after the old program's remains |
+| S_067, commands 1/2/5/9 | `5c90`: the first step runs inside the call (`4b16`), timers kept, ms kept plain | Deferred to the next tick: a sprite shown and then re-placed in the same script stayed hidden (Pinball's hole kick-out) |
+| COLLIDE (0x7C) | JUNGU01 `0f12..0f98`: each velocity component is a truncated long | Kept fractions |
+| Hotspot clicks, drag release, key-up | `2c7e` passes no tag to a hotspot; `2d9e` keeps a vetoed drag; `304e` gives a player's key-up to the player alone and never reads +0x0E | Passed the sprite id; dropped the drag; ran the up binding |
+
+## Port audit: behaviour the port had silently dropped
+
+Found by comparing the port against the original's dispatch tables and by a census of what the
+disc's data actually uses (`jungle FILE.BIN --audit`, and `JUNGLE_BUILTIN_CENSUS=1 jungle FILE.BIN
+--script`). Each item returned success without doing anything, so the e2e "no unimplemented
+opcode" check could not see it. All are now ported from the original code.
+
+| What | Original | Effect when missing |
+|---|---|---|
+| Sprite command 22, movies | JUNGS01 `FUN_1000_4d86`; frames in a type 2 resource, indexed by a second type 2, named by a type 8 | The animated **Disney Interactive logo** in the opening card's banner never played |
+| Op 35 and the Pause key | `FUN_1008_2776`, called by `FUN_1008_2f72` for VK_PAUSE | **Pause** did nothing; every game has a PAUSE sign and handler |
+| Op 4, every hotspot at once | `FUN_1008_25a8` (on/off), `228e` (one click script, or none) | Clicks were taken where a scene had switched them all off |
+| Op 83, device bindings | `FUN_1008_454c`: the old device off, held input released (`3e42`), the kinds in use | A player's previous device stayed armed; enable/disable and release did nothing |
+| Mouse as a joystick | `FUN_1008_73fe` / `72e4`: dead zone 20, box 40, GETANGLE → GETQUADRANT → DS:0x78 | Choosing the mouse as a player's device gave no control at all |
+| Builtin 0x70 | JUNGA01 ordinal 25: hold or resume sound and music | Called three times in every scene |
+| Builtin 0x78 | JUNGS01 ordinal 77: `ScrollDC` by (dx, dy), by −2(dx, dy), back | Pinball's and Bug Drop's screen jolts never showed |
+| Builtin 0x89 | `FUN_1008_488e`: a player's device back, optionally the other's off | Called once in each game |
+| Builtin 0x6E | sets DAT_5a57, how joysticks are read (`FUN_1008_4a00`) | Stored; the port has no joystick path (a pad arrives as keys) |
+| Game keys | `FUN_1008_4e6e` returns 0 once a player takes the key, and `2f72` stops | A player's key could also fire a script binding |
+| Shift / Ctrl bindings | `2f72` tests Shift first, then Ctrl, with no fall-back | Shift+key ran the plain binding where the original ran nothing |
+
+Still not ported, on purpose: sprite commands 3, 4, 18 and 19 (not used anywhere on this disc),
+builtins 0x1B, 0x5F, 0x64, 0x68, 0x7D and 0x82 (no script calls them), and the Esc handling of
+the rubber-band rectangle in segment 3 (`DAT_5a66`), which no game script starts. The "&" and
+"PRESENT" sprites on the opening card (JUNGLE.BIN 82 and 84) are art the original never shows.

@@ -300,6 +300,8 @@ static int vm_addr(int index)
     return (VM_FRAME_BASE - index * 2) & 0xFFFF;
 }
 
+static unsigned g_builtin_census[256];   /* --script: builtin ids the expressions call */
+
 static s16 vm_run(VM *vm, const u8 *code, size_t n)
 {
     s16 S[VM_STACK]; int sp = 0; size_t p = 0;
@@ -325,7 +327,14 @@ static s16 vm_run(VM *vm, const u8 *code, size_t n)
         case 8:  sp--; vm->mem[(u16)S[sp]] = S[sp+1]; S[sp] = S[sp+1]; break;
         case 39: sp++; S[sp] = vm->mem[(u16)S[sp-1]]; break;
         case 34: { u16 a = (u16)S[sp]; S[sp] = vm->mem[a]; vm->mem[a]++; } break;
-        case 5: case 12: case 13: case 37: case 38: break;
+        case 12: case 13: {                   /* calls: count the builtin, keep the stack in step */
+            int argc = (int)((unsigned long)arg >> 16);
+            if (argc < 0 || argc >= sp) break;
+            if (op == 12) { int id = (u16)S[sp - argc]; if (id < 256) g_builtin_census[id]++; }
+            sp -= argc; S[sp] = 0;
+            break;
+        }
+        case 5: case 37: case 38: break;
         case 14: S[sp] = (s16)(-S[sp]); break;
         case 15: S[sp] = (s16)(S[sp] == 0); break;
         case 16: S[sp] = (s16)(~S[sp]); break;
@@ -736,7 +745,11 @@ static int drive_mode(Engine *e, FILE *wav, u32 *wav_n)
         } else if (!strcmp(cmd, "spr")) {             /* one sprite: x y visible, or "none" */
             sscanf(line, "%*s %d", &a);
             int k; for (k = 0; k < ENG_MAX_SPRITES; k++) if (e->spr[k].used && e->spr[k].res == a) break;
-            if (k < ENG_MAX_SPRITES) printf("%d %d %d\n", e->spr[k].x, e->spr[k].y, e->spr[k].visible); else printf("none\n");
+            if (k < ENG_MAX_SPRITES) {                /* then the program: running pc len frozen fdue-now mdue-now fper mper catchup */
+                Sprite *sp = &e->spr[k];
+                printf("%d %d %d %d %d %d %d %d %d %u %u %d\n", sp->x, sp->y, sp->visible, sp->running, sp->pc, sp->plen, sp->frozen,
+                       (int)(sp->fdue - e->now), (int)(sp->mdue - e->now), sp->fper, sp->mper, sp->catchup);
+            } else printf("none\n");
         } else if (!strcmp(cmd, "sprites")) {
             for (int i = 0; i < ENG_MAX_SPRITES; i++) {
                 Sprite *sp = &e->spr[i];
@@ -761,6 +774,21 @@ static int drive_mode(Engine *e, FILE *wav, u32 *wav_n)
             char *p = line + 4; if (sscanf(p, "%x%n", &id, &off) == 1) p += off;
             while (na < 8 && sscanf(p, "%d%n", &v, &off) == 1) { args[na++] = (s16)v; p += off; }
             printf("%d\n", engine_builtin(e, id, args, na));
+        } else if (!strcmp(cmd, "mask")) {            /* mask FILE RES...: the union of the sprites' solid pixels, a PGM */
+            char out[400]; int off = 0; int res[32], nres = 0, v;
+            if (sscanf(line, "%*s %399s%n", out, &off) == 1) {
+                const char *q = line; q = strstr(q, out) + strlen(out);
+                while (nres < 32 && sscanf(q, "%d%n", &v, &off) == 1) { res[nres++] = v; q += off; }
+                FILE *pf = fopen(out, "wb");
+                if (pf) {
+                    fprintf(pf, "P5 %d %d 255\n", ENG_W, ENG_H);
+                    for (int yy = 0; yy < ENG_H; yy++) for (int xx = 0; xx < ENG_W; xx++) {
+                        int hit = 0; for (int k = 0; k < nres && !hit; k++) hit = engine_sprite_hit(e, res[k], xx, yy);
+                        fputc(hit ? 255 : 0, pf);
+                    }
+                    fclose(pf);
+                }
+            }
         } else if (!strcmp(cmd, "set")) {             /* set N V: write script global N */
             sscanf(line, "%*s %d %d", &a, &b);
             if (a >= 0 && a < 0x13FE) e->mem[(0x151E >> 1) + a]   /* VAR_BASE, engine.c */ = (u16)(s16)b;
@@ -862,6 +890,40 @@ int main(int argc, char **argv)
     /* No arguments: play. The disc's JUNGLE directory is looked for where
      * each platform keeps app data (the user copies it there from their disc). */
     static char def_bin[1024]; static char *def_argv[3];
+    if (argc > 2 && strcmp(argv[2], "--audit") == 0) {   /* FILE.BIN --audit: what the data uses that the port may not do */
+        Container ca;
+        if (!container_open(&ca, argv[1])) return 1;
+        int types[32] = { 0 }, ops[64] = { 0 }, celtype[32] = { 0 }, bad = 0;
+        for (int i = 0; i < ca.ndir; i++) {
+            int t = ca.dir[i].type; if (t < 32) types[t]++;
+            const u8 *r = resource_bytes(&ca, &ca.dir[i]); size_t n = ca.dir[i].size;
+            if (t == 13) {
+                for (size_t pc = 0; pc + 2 <= n; ) {
+                    int op = rd16(r + pc), len = engine_t13_len(r + pc, n - pc);
+                    if (op < 64) ops[op]++;
+                    if (op == 3 || op == 4 || op == 18 || op == 19)
+                        printf("  res %d (type 13) @%zu: op %d skipped by the port, words %04x %04x %04x %04x\n", i, pc, op,
+                               n - pc >= 4 ? rd16(r + pc + 2) : 0, n - pc >= 6 ? rd16(r + pc + 4) : 0, n - pc >= 8 ? rd16(r + pc + 6) : 0, n - pc >= 10 ? rd16(r + pc + 8) : 0);
+                    if (len <= 0) { if (op) bad++; break; }
+                    pc += (size_t)len;
+                }
+            } else if (t == 15 && n >= 0x14) {           /* a sprite: its cels, and what each one is */
+                int nc = rd16(r + 2);
+                for (int k = 0; k < nc && 0x14 + (size_t)k * 2 + 2 <= n; k++) {
+                    int ci = rd16(r + 0x14 + k * 2) - (0x10000 - 0x7531);
+                    if (ci < 0 || ci >= ca.ndir) continue;
+                    int ct = ca.dir[ci].type; if (ct < 32) celtype[ct]++;
+                    if (ct != 1 && ct != 10 && ct != 16 && ct != 13 && ct != 7)
+                        printf("  res %d (sprite) cel %d -> res %d of type %d\n", i, k, ci, ct);
+                }
+            }
+        }
+        printf("%s: types", argv[1]); for (int t = 0; t < 32; t++) if (types[t]) printf(" %d:%d", t, types[t]);
+        printf("\n  sprite-program ops"); for (int o = 0; o < 64; o++) if (ops[o]) printf(" %d:%d", o, ops[o]);
+        printf("\n  sprite cel types"); for (int t = 0; t < 32; t++) if (celtype[t]) printf(" %d:%d", t, celtype[t]);
+        printf("\n  unparsed programs %d\n", bad);
+        return 0;
+    }
     if (argc > 3 && strcmp(argv[1], "--extract-iso") == 0) {   /* --extract-iso IMAGE DEST: the disc's JUNGLE directory */
         int n = iso_extract_dir(argv[2], "JUNGLE", argv[3]);
         if (n > 0) printf("%d files from %s -> %s\n", n, argv[2], argv[3]);
@@ -998,6 +1060,11 @@ int main(int argc, char **argv)
                 if (blockers[i]) printf("    blocked by opcode %-4d x%d\n", i, blockers[i]);
         }
         free(vm.mem);
+        if (getenv("JUNGLE_BUILTIN_CENSUS")) {
+            printf("builtins called:");
+            for (int k = 0; k < 256; k++) if (g_builtin_census[k]) printf(" %02X:%u", k, g_builtin_census[k]);
+            printf("\n");
+        }
         return 0;
     }
 
@@ -1504,29 +1571,7 @@ int main(int argc, char **argv)
                     engine_mouse(e, mx, my, b, ev.type == SDL_MOUSEBUTTONDOWN);
                 } else if (ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) {
                     SDL_Keycode k = ev.key.keysym.sym;
-                    int vk = 0;                      /* SDL keycode -> Windows virtual key */
-                    if (k == SDLK_ESCAPE) vk = 0x1B; else if (k == SDLK_SPACE) vk = 0x20;
-                    else if (k == SDLK_BACKSPACE) vk = 0x08;
-                    /* iPad keyboards have no Esc: ` (where Esc sits) and Cmd+. stand in for it */
-                    else if (k == SDLK_BACKQUOTE) vk = 0x1B;
-                    else if (k == SDLK_PERIOD && (ev.key.keysym.mod & KMOD_GUI)) vk = 0x1B;
-                    else if (k == SDLK_RETURN) vk = 0x0D;
-                    else if (k == SDLK_LEFT) vk = 0x25; else if (k == SDLK_UP) vk = 0x26;
-                    else if (k == SDLK_RIGHT) vk = 0x27; else if (k == SDLK_DOWN) vk = 0x28;
-                    else if (k == SDLK_KP_PLUS) vk = 0x6B; else if (k == SDLK_KP_MINUS) vk = 0x6D;
-                    else if (k == SDLK_KP_MULTIPLY) vk = 0x6A;
-                    else if (k == SDLK_SLASH) vk = 0xBF;
-                    /* the OEM keys: Bug Drop's player one rotates with , and . (< and >) */
-                    else if (k == SDLK_COMMA) vk = 0xBC; else if (k == SDLK_PERIOD) vk = 0xBE;
-                    else if (k == SDLK_SEMICOLON) vk = 0xBA; else if (k == SDLK_QUOTE) vk = 0xDE;
-                    else if (k == SDLK_MINUS) vk = 0xBD; else if (k == SDLK_EQUALS) vk = 0xBB;
-                    else if (k == SDLK_LEFTBRACKET) vk = 0xDB; else if (k == SDLK_RIGHTBRACKET) vk = 0xDD;
-                    else if (k == SDLK_BACKSLASH) vk = 0xDC;
-                    else if (k == SDLK_LCTRL || k == SDLK_RCTRL) vk = 0x11;
-                    else if (k == SDLK_LSHIFT || k == SDLK_RSHIFT) vk = 0x10;
-                    else if (k >= SDLK_F1 && k <= SDLK_F12) vk = 0x70 + (k - SDLK_F1);
-                    else if (k >= SDLK_a && k <= SDLK_z) vk = 0x41 + (k - SDLK_a);
-                    else if (k >= SDLK_0 && k <= SDLK_9) vk = 0x30 + (k - SDLK_0);
+                    int vk = pad_key_vk(&ev.key.keysym);   /* SDL key -> Windows virtual key */
                     if (k == SDLK_F9 && ev.type == SDL_KEYDOWN) {    /* next art level */
                         int k2 = 0; while (k2 < nlev && levels[k2] != art) k2++;
                         art = levels[(k2 + 1) % nlev];
@@ -1552,6 +1597,7 @@ int main(int argc, char **argv)
                 last_pad = now;
             }
             engine_tick(e, SDL_GetTicks() - t0);
+            if (e->quit) running = 0;              /* op 18 back from the first scene: WM_CLOSE */
             if (e->warp.host) {                      /* op 73: put the real pointer where the game moved it */
                 e->warp.host = 0;
                 int wx = e->warp.x, wy = e->warp.y; from_canvas(win, ren, &wx, &wy);
